@@ -1,0 +1,19 @@
+{
+    "name": "AI CPU Benchmarking",
+    "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+    "features": {
+        "ghcr.io/devcontainers/features/azure-cli:1": {
+            "installBicep": true
+        },
+        "ghcr.io/devcontainers/features/python:1": {}
+    },
+    "postCreateCommand": "sudo apt-get install -y jq && pip install 'huggingface-hub>=0.22' && bash scripts/install-azcopy.sh && chmod +x scripts/*.sh",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-azuretools.vscode-bicep"
+            ]
+        }
+    },
+    "remoteUser": "vscode"
+}

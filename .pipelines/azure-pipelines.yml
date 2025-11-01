@@ -1,0 +1,262 @@
+# =============================================================================
+# AI CPU Benchmarking – Azure Pipelines Workflow
+#
+# Deploys Azure VMs, runs llama.cpp benchmarks, collects results, and cleans up.
+#
+# Variable Groups / Secrets required (configure in Library → Variable groups):
+#   Variable group: "ai-benchmark-secrets"
+#     AZURE_SERVICE_CONNECTION  – Azure DevOps service connection name
+#     SSH_PUBLIC_KEY             – RSA public key for VM auth
+#     HF_TOKEN                   – Hugging Face access token (read)
+#     HF_USERNAME                – Hugging Face username
+#     STORAGE_ACCOUNT_NAME       – (optional) Azure Storage Account for caching
+#                                  VMs authenticate via user-assigned managed identity;
+#                                  no SAS token is required.
+# =============================================================================
+trigger: none   # Manual / scheduled only
+
+parameters:
+  - name: resourceGroup
+    displayName: "Azure Resource Group name"
+    type: string
+    default: "rg-ai-benchmark"
+
+  - name: location
+    displayName: "Azure region"
+    type: string
+    default: "eastus"
+
+  - name: vmSkus
+    displayName: "VM SKUs to benchmark"
+    type: object
+    default:
+      - Standard_D4ps_v6
+      - Standard_D8ps_v6
+
+  - name: modelId
+    displayName: "Hugging Face model repository (owner/repo)"
+    type: string
+    default: "microsoft/phi-4-gguf"
+
+  - name: modelFilename
+    displayName: "GGUF filename within the model repository"
+    type: string
+    default: "phi-4-Q4_K_S.gguf"
+
+  - name: uploadModelFirst
+    displayName: "Pre-upload model to Azure Blob Storage before benchmarking"
+    type: boolean
+    default: false
+
+  - name: cleanupAfter
+    displayName: "Delete VMs after benchmarks complete"
+    type: boolean
+    default: true
+
+variables:
+  - group: ai-benchmark-secrets
+
+stages:
+  # ─── Stage 1: Pre-flight ────────────────────────────────────────────────────
+  - stage: Preflight
+    displayName: "Pre-flight"
+    jobs:
+      - job: ResolveVMNames
+        displayName: "Resolve VM names from SKUs"
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - checkout: self
+
+          - task: Bash@3
+            displayName: "Compute VM names"
+            name: resolveStep
+            inputs:
+              targetType: filePath
+              filePath: scripts/resolve-vm-names.sh
+              arguments: "${{ join(',', parameters.vmSkus) }}"
+
+  # ─── Stage 2: Upload model (optional) ───────────────────────────────────────
+  - stage: UploadModel
+    displayName: "Upload Model to Blob Storage"
+    dependsOn: Preflight
+    condition: and(succeeded(), eq('${{ parameters.uploadModelFirst }}', 'true'))
+    jobs:
+      - job: Upload
+        displayName: "Upload GGUF to Azure Blob"
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - checkout: self
+
+          - task: AzureCLI@2
+            displayName: "Upload model via runner-upload-model.sh"
+            inputs:
+              azureSubscription: $(AZURE_SERVICE_CONNECTION)
+              scriptType: bash
+              scriptLocation: scriptPath
+              scriptPath: scripts/runner-upload-model.sh
+            env:
+              HF_TOKEN:             $(HF_TOKEN)
+              HF_USERNAME:          $(HF_USERNAME)
+              STORAGE_ACCOUNT_NAME: $(STORAGE_ACCOUNT_NAME)
+              MODEL_ID:             ${{ parameters.modelId }}
+              MODEL_FILENAME:       ${{ parameters.modelFilename }}
+
+  # ─── Stage 3: Deploy infrastructure ─────────────────────────────────────────
+  - stage: Deploy
+    displayName: "Deploy VMs"
+    dependsOn:
+      - Preflight
+      - UploadModel
+    condition: |
+      and(
+        succeeded('Preflight'),
+        or(
+          succeeded('UploadModel'),
+          eq('${{ parameters.uploadModelFirst }}', 'false')
+        )
+      )
+    jobs:
+      - job: DeployVMs
+        displayName: "Deploy Bicep template"
+        pool:
+          vmImage: ubuntu-latest
+        variables:
+          vmSkusJson: $[ stageDependencies.Preflight.ResolveVMNames.outputs['resolveStep.vmSkusJson'] ]
+        steps:
+          - checkout: self
+
+          - task: AzureCLI@2
+            displayName: "Create Resource Group"
+            inputs:
+              azureSubscription: $(AZURE_SERVICE_CONNECTION)
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                az group create \
+                  --name     "${{ parameters.resourceGroup }}" \
+                  --location "${{ parameters.location }}" \
+                  --output   table
+
+          - task: AzureCLI@2
+            displayName: "Deploy Bicep stack"
+            name: msiStep
+            inputs:
+              azureSubscription: $(AZURE_SERVICE_CONNECTION)
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -euo pipefail
+                # Normalize STORAGE_ACCOUNT_NAME: treat unresolved ADO macros as empty
+                effective_storage="${STORAGE_ACCOUNT_NAME:-}"
+                if [[ "$effective_storage" == '$('* ]] || [[ "$effective_storage" == '$['* ]]; then
+                  effective_storage=""
+                fi
+                STACK_OUTPUT=$(az stack group create \
+                  --name                       benchmark-stack \
+                  --resource-group             "${{ parameters.resourceGroup }}" \
+                  --template-file              bicep/main.bicep \
+                  --parameters \
+                      location="${{ parameters.location }}" \
+                      vmSkus="$VM_SKUS_JSON" \
+                      adminUsername="azureuser" \
+                      sshPublicKey="$SSH_PUBLIC_KEY" \
+                      modelId="${{ parameters.modelId }}" \
+                      storageAccountName="$effective_storage" \
+                  --action-on-unmanage         deleteResources \
+                  --deny-settings-mode         none \
+                  --yes \
+                  --output json)
+
+                IDENTITY_CLIENT_ID=$(echo "${STACK_OUTPUT}" | jq -r '.outputs.identityClientId.value // empty')
+                IDENTITY_NAME=$(echo "${STACK_OUTPUT}"      | jq -r '.outputs.identityName.value // empty')
+                VNET_NAME=$(echo "${STACK_OUTPUT}"           | jq -r '.outputs.vnetName.value // empty')
+                echo "##vso[task.setvariable variable=identityClientId;isOutput=true]${IDENTITY_CLIENT_ID}"
+                echo "##vso[task.setvariable variable=identityName;isOutput=true]${IDENTITY_NAME}"
+                echo "##vso[task.setvariable variable=vnetName;isOutput=true]${VNET_NAME}"
+                echo "MSI client ID: ${IDENTITY_CLIENT_ID}"
+                echo "Identity name: ${IDENTITY_NAME}"
+                echo "VNet name:     ${VNET_NAME}"
+            env:
+              VM_SKUS_JSON:        $(vmSkusJson)
+              SSH_PUBLIC_KEY:      $(SSH_PUBLIC_KEY)
+              STORAGE_ACCOUNT_NAME: $(STORAGE_ACCOUNT_NAME)
+
+  # ─── Stage 4: Run benchmarks – one job per VM (mirrors GHA matrix) ──────────
+  - stage: Benchmark
+    displayName: "Run Benchmarks"
+    dependsOn:
+      - Preflight
+      - Deploy
+    condition: succeeded('Deploy')
+    variables:
+      identityClientId: $[ stageDependencies.Deploy.DeployVMs.outputs['msiStep.identityClientId'] ]
+    jobs:
+      - ${{ each sku in parameters.vmSkus }}:
+        - job: Bm${{ replace(replace(sku, 'Standard_', ''), '_', '') }}
+          displayName: "Benchmark ${{ sku }}"
+          pool:
+            vmImage: ubuntu-latest
+          timeoutInMinutes: 480    # 8 hours to accommodate long-running CPU benchmarks
+          steps:
+            - checkout: self
+
+            - task: AzureCLI@2
+              displayName: "Run benchmark on ${{ sku }}"
+              inputs:
+                azureSubscription: $(AZURE_SERVICE_CONNECTION)
+                scriptType: bash
+                scriptLocation: scriptPath
+                scriptPath: scripts/run-benchmarks.sh
+                arguments: >
+                  --resource-group "${{ parameters.resourceGroup }}"
+                  --vm-name "bm-${{ replace(replace(lower(sku), 'standard_', ''), '_', '-') }}"
+                  --model-id "${{ parameters.modelId }}"
+                  --model-filename "${{ parameters.modelFilename }}"
+                  --msi-client-id "$(identityClientId)"
+                  --results-dir "$(Build.ArtifactStagingDirectory)/benchmark-results"
+              env:
+                HF_TOKEN:             $(HF_TOKEN)
+                HF_USERNAME:          $(HF_USERNAME)
+                STORAGE_ACCOUNT_NAME: $(STORAGE_ACCOUNT_NAME)
+
+            - task: PublishBuildArtifacts@1
+              displayName: "Publish benchmark results"
+              condition: always()
+              inputs:
+                PathtoPublish: "$(Build.ArtifactStagingDirectory)/benchmark-results"
+                ArtifactName:  "benchmark-${{ sku }}"
+                publishLocation: Container
+
+  # ─── Stage 5: Cleanup ────────────────────────────────────────────────────────
+  - stage: Cleanup
+    displayName: "Cleanup VMs"
+    dependsOn:
+      - Deploy
+      - Benchmark
+    condition: |
+      and(
+        always(),
+        eq('${{ parameters.cleanupAfter }}', 'true'),
+        in(dependencies.Deploy.result, 'Succeeded', 'SucceededWithIssues')
+      )
+    jobs:
+      - job: DeleteVMs
+        displayName: "Delete deployment stack"
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - task: AzureCLI@2
+            displayName: "Delete deployment stack"
+            inputs:
+              azureSubscription: $(AZURE_SERVICE_CONNECTION)
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -euo pipefail
+                az stack group delete \
+                  --name           benchmark-stack \
+                  --resource-group "${{ parameters.resourceGroup }}" \
+                  --action-on-unmanage deleteResources \
+                  --yes

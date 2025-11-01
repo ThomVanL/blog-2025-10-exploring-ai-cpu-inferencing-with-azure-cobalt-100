@@ -1,0 +1,93 @@
+#cloud-config
+# =============================================================================
+# Cloud-init configuration for AI CPU benchmarking VMs
+# Runs once on first boot.  Installs all dependencies needed to:
+#   1. Download GGUF models from Hugging Face (or Azure Blob Storage)
+#   2. Run CPU inference benchmarks with llama.cpp
+#   3. Transfer model files to/from Azure Blob Storage (azcopy)
+# =============================================================================
+
+# Keep packages up-to-date and install build dependencies.
+package_update: true
+package_upgrade: true
+packages:
+  - build-essential
+  - libcurl4-openssl-dev
+  - make
+  - cmake
+  - gcc
+  - g++
+  - git
+  - curl
+  - wget
+  - jq
+  - python3-pip
+  - python3-venv
+  - ca-certificates
+  - lsb-release
+  - unzip
+  - pv          # progress viewer (useful for large file transfers)
+
+# Write the setup script as a proper bash file so that bash-specific options
+# like `pipefail` are available. cloud-init runcmd runs items under /bin/sh
+# (dash on Ubuntu), which does not support `set -o pipefail`.
+write_files:
+  - path: /opt/cloud-init-setup.sh
+    permissions: '0755'
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      # --------------------------------------------------------------------------
+      # 1. Install AzCopy for Azure Blob Storage transfers
+      # --------------------------------------------------------------------------
+      AZCOPY_DL="https://aka.ms/downloadazcopy-v10-linux"
+      # Detect architecture so we fetch the right binary.
+      ARCH="$(uname -m)"
+      if [ "${ARCH}" = "aarch64" ]; then
+        AZCOPY_DL="https://aka.ms/downloadazcopy-v10-linux-arm64"
+      fi
+      curl -fsSL "${AZCOPY_DL}" -o /tmp/azcopy.tar.gz
+      tar -xzf /tmp/azcopy.tar.gz -C /tmp
+      find /tmp -name 'azcopy' -type f -exec mv {} /usr/local/bin/azcopy \;
+      chmod +x /usr/local/bin/azcopy
+      rm -f /tmp/azcopy.tar.gz
+
+      # --------------------------------------------------------------------------
+      # 2. Install Hugging Face CLI (huggingface-hub)
+      # --------------------------------------------------------------------------
+      pip3 install --upgrade huggingface-hub
+
+      # --------------------------------------------------------------------------
+      # 3. Build llama.cpp from source with native CPU optimisations
+      #    -DCMAKE_CXX_FLAGS="-mcpu=native" and -DCMAKE_C_FLAGS="-mcpu=native"
+      #    let the compiler target all CPU extensions available on the host
+      #    (SVE, DOTPROD, I8MM, etc. on Azure Cobalt 100 / Neoverse N2).
+      # --------------------------------------------------------------------------
+      git clone --depth 1 https://github.com/ggerganov/llama.cpp /opt/llama.cpp
+      cmake -S /opt/llama.cpp -B /opt/llama.cpp/build \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_CXX_FLAGS="-mcpu=native" \
+        -DCMAKE_C_FLAGS="-mcpu=native"
+      cmake --build /opt/llama.cpp/build -v --config Release -j "$(nproc)"
+      # Symlink key binaries to /usr/local/bin for easy access.
+      ln -sf /opt/llama.cpp/build/bin/llama-bench         /usr/local/bin/llama-bench
+      ln -sf /opt/llama.cpp/build/bin/llama-batched-bench /usr/local/bin/llama-batched-bench
+      ln -sf /opt/llama.cpp/build/bin/llama-cli           /usr/local/bin/llama-cli
+
+      # --------------------------------------------------------------------------
+      # 4. Create a working directory for model files
+      # --------------------------------------------------------------------------
+      mkdir -p /opt/models
+
+      # --------------------------------------------------------------------------
+      # 5. Write a readiness marker so the benchmark script can wait for init.
+      # --------------------------------------------------------------------------
+      touch /tmp/cloud-init-done
+
+runcmd:
+  - /opt/cloud-init-setup.sh
+
+final_message: |
+  Cloud-init finished. llama.cpp and huggingface-hub are ready.
+  Run /usr/local/bin/llama-bench --help to verify the installation.

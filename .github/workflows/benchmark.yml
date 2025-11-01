@@ -1,0 +1,279 @@
+# =============================================================================
+# AI CPU Benchmarking – GitHub Actions Workflow
+#
+# Deploys Azure VMs, waits for cloud-init, runs llama.cpp benchmarks,
+# collects results, and cleans up.
+#
+# Secrets required (configure in Settings → Secrets):
+#   AZURE_CLIENT_ID          – Service principal or Managed Identity client ID
+#   AZURE_TENANT_ID          – Azure AD tenant ID
+#   AZURE_SUBSCRIPTION_ID    – Target subscription
+#   SSH_PUBLIC_KEY           – RSA public key for VM auth (no private key needed)
+#   HF_TOKEN                 – Hugging Face access token (read)
+#   HF_USERNAME              – Hugging Face username
+#   STORAGE_ACCOUNT_NAME     – (optional) Azure Storage Account for model caching
+#                              VMs use their user-assigned managed identity to
+#                              authenticate with Blob Storage (no SAS token needed).
+# =============================================================================
+name: AI CPU Benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      resource_group:
+        description: "Azure Resource Group name (created if it does not exist)"
+        required: true
+        default: "rg-ai-benchmark"
+      location:
+        description: "Azure region"
+        required: true
+        default: "eastus"
+      vm_skus:
+        description: "Comma-separated list of Azure VM SKUs to benchmark"
+        required: true
+        default: "Standard_D2ps_v6,Standard_D4ps_v6,Standard_D8ps_v6,Standard_D16ps_v6"
+      model_id:
+        description: "Hugging Face model repository (owner/repo)"
+        required: true
+        default: "microsoft/phi-4-gguf"
+      model_filename:
+        description: "GGUF filename within the model repository"
+        required: true
+        default: "phi-4-Q4_K_S.gguf"
+      upload_model_first:
+        description: "Download model to Azure Blob Storage before benchmarking (requires STORAGE_ACCOUNT_NAME secret)"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "true"
+          - "false"
+      cleanup_after:
+        description: "Delete VMs after benchmarks complete"
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+permissions:
+  id-token: write   # Required for OIDC authentication with Azure
+  contents: read
+
+env:
+  AZURE_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
+  AZURE_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
+  AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+jobs:
+  # ─── 1. Pre-flight: validate inputs and resolve VM names ───────────────────
+  preflight:
+    name: Pre-flight Checks
+    runs-on: ubuntu-latest
+    outputs:
+      vm_names:         ${{ steps.resolve.outputs.vm_names }}
+      vm_names_json:    ${{ steps.resolve.outputs.vm_names_json }}
+      vm_skus_json_raw: ${{ steps.resolve.outputs.vm_skus_json_raw }}
+      resource_group:   ${{ steps.resolve.outputs.resource_group }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve VM names from SKUs
+        id: resolve
+        run: bash scripts/resolve-vm-names.sh "${{ inputs.vm_skus }}" "${{ inputs.resource_group }}"
+
+  # ─── 2. Optionally pre-populate Azure Blob Storage with the model ──────────
+  upload-model:
+    name: Upload Model to Azure Storage
+    runs-on: ubuntu-latest
+    needs: preflight
+    if: inputs.upload_model_first == 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Upload model to Blob Storage
+        run: bash scripts/runner-upload-model.sh
+        env:
+          HF_TOKEN:             ${{ secrets.HF_TOKEN }}
+          HF_USERNAME:          ${{ secrets.HF_USERNAME }}
+          STORAGE_ACCOUNT_NAME: ${{ secrets.STORAGE_ACCOUNT_NAME }}
+          MODEL_ID:             ${{ inputs.model_id }}
+          MODEL_FILENAME:       ${{ inputs.model_filename }}
+
+  # ─── 3. Deploy infrastructure (Bicep → Azure VMs) ─────────────────────────
+  deploy:
+    name: Deploy VMs
+    runs-on: ubuntu-latest
+    needs: [preflight, upload-model]
+    # Run even if upload-model was skipped, but not if it explicitly failed.
+    if: |
+      always() &&
+      needs.preflight.result == 'success' &&
+      (needs.upload-model.result == 'success' || needs.upload-model.result == 'skipped')
+    outputs:
+      identity_client_id: ${{ steps.deploy.outputs.identityClientId }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Create Resource Group
+        run: |
+          az group create \
+            --name     "${{ needs.preflight.outputs.resource_group }}" \
+            --location "${{ inputs.location }}" \
+            --output   table
+
+      - name: Deploy Bicep template
+        id: deploy
+        uses: azure/bicep-deploy@v2
+        with:
+          type:                              deploymentStack
+          operation:                         create
+          scope:                             resourceGroup
+          name:                              benchmark-stack
+          subscription-id:                   ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          resource-group-name:               ${{ needs.preflight.outputs.resource_group }}
+          template-file:                     bicep/main.bicep
+          parameters: |
+            location: ${{ inputs.location }}
+            vmSkus: ${{ needs.preflight.outputs.vm_skus_json_raw }}
+            adminUsername: azureuser
+            sshPublicKey: "${{ secrets.SSH_PUBLIC_KEY }}"
+            modelId: "${{ inputs.model_id }}"
+            storageAccountName: "${{ secrets.STORAGE_ACCOUNT_NAME }}"
+          action-on-unmanage-resources:      delete
+          action-on-unmanage-resourcegroups: detach
+          deny-settings-mode:                none
+
+  # ─── 4. Benchmark – one job per VM via dynamic matrix ───────────────────────
+  benchmark:
+    name: "Benchmark ${{ matrix.vm }}"
+    runs-on: ubuntu-latest
+    needs: [preflight, deploy]
+    if: always() && needs.deploy.result == 'success'
+    strategy:
+      # max-parallel: 1 keeps benchmarks sequential, which avoids Hugging Face
+      # rate-limiting when model caching is disabled. Remove or increase to run
+      # VMs in parallel.
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        vm: ${{ fromJson(needs.preflight.outputs.vm_names_json) }}
+    timeout-minutes: 480   # 8 hours to accommodate long-running CPU benchmarks
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Run benchmark on ${{ matrix.vm }}
+        run: |
+          bash scripts/run-benchmarks.sh \
+            --resource-group  "${{ needs.preflight.outputs.resource_group }}" \
+            --vm-name         "${{ matrix.vm }}" \
+            --model-id        "${{ inputs.model_id }}" \
+            --model-filename  "${{ inputs.model_filename }}" \
+            --msi-client-id   "${{ needs.deploy.outputs.identity_client_id }}" \
+            --storage-account "${{ secrets.STORAGE_ACCOUNT_NAME }}" \
+            --results-dir     "${{ runner.temp }}/benchmark-results"
+        env:
+          HF_TOKEN:             ${{ secrets.HF_TOKEN }}
+          HF_USERNAME:          ${{ secrets.HF_USERNAME }}
+          STORAGE_ACCOUNT_NAME: ${{ secrets.STORAGE_ACCOUNT_NAME }}
+
+      - name: Upload per-VM results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-${{ matrix.vm }}
+          path: ${{ runner.temp }}/benchmark-results/
+          retention-days: 30
+
+  # ─── 5. Aggregate results from all VMs ──────────────────────────────────────
+  aggregate:
+    name: Aggregate results
+    runs-on: ubuntu-latest
+    needs: [deploy, benchmark]
+    if: always() && needs.deploy.result == 'success'
+    steps:
+      - name: Download all per-VM artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: benchmark-*
+          path: benchmark-results
+          merge-multiple: true
+
+      - name: Build summary
+        run: |
+          SUMMARY="benchmark-results/summary.txt"
+          mkdir -p benchmark-results
+          {
+            echo "============================================================"
+            echo " AI CPU Benchmark Summary"
+            echo " Model : ${{ inputs.model_id }} / ${{ inputs.model_filename }}"
+            echo " Date  : $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "============================================================"
+            for f in benchmark-results/*.txt; do
+              awk '/BENCHMARK_JSON_START/{p=1;next}/BENCHMARK_JSON_END/{p=0}p' "${f}"
+            done
+          } > "${SUMMARY}"
+          cat "${SUMMARY}"
+
+      - name: Upload summary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-summary
+          path: benchmark-results/summary.txt
+          retention-days: 30
+
+  # ─── 6. Cleanup ─────────────────────────────────────────────────────────────
+  cleanup:
+    name: Cleanup VMs
+    runs-on: ubuntu-latest
+    needs: [preflight, deploy, benchmark]
+    if: |
+      always() &&
+      inputs.cleanup_after == 'true' &&
+      needs.deploy.result == 'success'
+    steps:
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Delete deployment stack
+        uses: azure/bicep-deploy@v2
+        with:
+          type:                              deploymentStack
+          operation:                         delete
+          scope:                             resourceGroup
+          name:                             benchmark-stack
+          subscription-id:                   ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          resource-group-name:               ${{ needs.preflight.outputs.resource_group }}
+          action-on-unmanage-resources:      delete
+          action-on-unmanage-resourcegroups: detach
+          deny-settings-mode:                none
