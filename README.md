@@ -152,10 +152,7 @@ Check and request quota increases:
 
 ```bash
 # Check current quota for ARM64 Dps_v6 family
-az vm list-usage \
-  --location eastus \
-  --query "[?name.localizedValue=='Standard DPSv6 Family vCPUs']" \
-  --output table
+az vm list-usage --location eastus --query "[?name.localizedValue=='Standard Dpsv6 Family vCPUs']" --output table
 ```
 
 Maximum vCPUs across all SKUs:
