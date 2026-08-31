@@ -2,7 +2,8 @@
 # =============================================================================
 # benchmark.sh – Run AI CPU inference benchmarks with llama.cpp on a single VM.
 #
-# This script is executed ON THE VM via an Azure Run Command.
+# This script is executed ON THE VM – via Ansible (ansible/benchmark.yml) in
+# GitHub Actions, or via an Azure Run Command in Azure Pipelines.
 # It is NOT meant to be run directly on your workstation.
 #
 # Required environment variables:

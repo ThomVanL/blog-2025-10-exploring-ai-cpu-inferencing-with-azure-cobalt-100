@@ -6,7 +6,7 @@ A tool repository for my [Exploring AI CPU-Inferencing with Azure Cobalt 100](ht
 
 > [!NOTE]
 >
-> Looking back at this, I probably should have used Ansible over `az vm run-command`.
+> Looking back at this, I probably should have used Ansible over `az vm run-command` — so the GitHub Actions workflow now does exactly that: the runner acts as an Ansible control node and runs `ansible/benchmark.yml` against each VM over SSH. The Azure DevOps pipeline still uses the original `az vm run-command` approach (`scripts/run-benchmarks.sh`).
 
 There's both a **GitHub Actions workflow** and an **Azure DevOps pipeline** in there if you want to orchestrate the whole thing end-to-end. If you'd rather just grab the individual scripts in the `scripts/` folder and run them by hand, that works just fine too.
 
@@ -36,7 +36,7 @@ There's both a **GitHub Actions workflow** and an **Azure DevOps pipeline** in t
 │  1. Pre-flight  (resolve VM names from SKUs)        │
 │  2. Upload Model (optional – blob cache)            │
 │  3. Deploy VMs  (Bicep + AVM + deployment stack)    │
-│  4. Benchmark   (Azure Run Command per VM)          │
+│  4. Benchmark   (Ansible playbook over SSH per VM)  │
 │  5. Cleanup     (delete deployment stack)           │
 └─────────────────────────────────────────────────────┘
            │                      │
@@ -54,8 +54,8 @@ There's both a **GitHub Actions workflow** and an **Azure DevOps pipeline** in t
   │  ┌─────▼─────┐  │
   │  │ bm-d2ps.. │──┼── cloud-init: llama.cpp + HF CLI
   │  │ bm-d4ps.. │  │
-  │  │ bm-d8ps.. │  │   Azure Run Command injects
-  │  │ bm-d16ps. │  │   benchmark.sh → captures output
+  │  │ bm-d8ps.. │  │   Ansible (SSH via LB NAT)
+  │  │ bm-d16ps. │  │   runs benchmark.sh → captures output
   │  └───────────┘  │
   └─────────────────┘
 ```
@@ -64,8 +64,8 @@ There's both a **GitHub Actions workflow** and an **Azure DevOps pipeline** in t
 
 | Decision | Choice | Reason |
 |---|---|---|
-| Execution method | Azure Run Command (async) | No public IP / SSH needed; captured output |
-| Cloud-init vs Ansible | Cloud-init | Simpler; no control node required |
+| Execution method | Ansible over SSH (GitHub Actions) / Azure Run Command (Azure Pipelines) | Runner acts as control node; SSH via LB NAT rules; captured output |
+| Cloud-init vs Ansible | Cloud-init for provisioning, Ansible for benchmark orchestration | Cloud-init handles first boot; the ephemeral runner is the control node |
 | Inference engine | llama.cpp (built from source) | Native ARM/SVE optimisations for Cobalt 100 |
 | Model format | GGUF (4-bit quantised) | CPU-friendly quantisation; size varies by model |
 | Sequential toggle | Workflow parameter | Avoids Hugging Face download throttling |
@@ -83,9 +83,13 @@ There's both a **GitHub Actions workflow** and an **Azure DevOps pipeline** in t
 │   ├── main.bicepparam     # Default parameter values
 │   └── assets/
 │       └── cloud-init.yaml # Cloud-init: install llama.cpp, HF CLI, azcopy
+├── ansible/
+│   ├── ansible.cfg         # SSH keepalives (LB idle timeout), no host key checks
+│   └── benchmark.yml       # Playbook: wait for cloud-init, run benchmark.sh, fetch results
 ├── scripts/
-│   ├── benchmark.sh        # Benchmark runner (executed ON the VM via Run Command)
-│   ├── run-benchmarks.sh   # Orchestration: submit Run Commands, collect results
+│   ├── benchmark.sh        # Benchmark runner (executed ON the VM)
+│   ├── build-ansible-inventory.sh # Resolve LB public IP + SSH NAT ports into an inventory
+│   ├── run-benchmarks.sh   # Legacy Run Command orchestration (still used by Azure Pipelines)
 │   └── upload-model.sh     # Pre-upload GGUF model to Azure Blob Storage
 ├── .devcontainer
 │   └── devcontainer.json   # Dev container configuration
@@ -104,6 +108,7 @@ There's both a **GitHub Actions workflow** and an **Azure DevOps pipeline** in t
 |---|---|---|
 | Azure CLI | ≥ 2.60 | Deploy & manage resources |
 | Bicep CLI | ≥ 0.28 | Compile Bicep templates |
+| Ansible (ansible-core) | ≥ 2.15 | Run the benchmark playbook over SSH |
 | `huggingface-hub` | ≥ 0.22 | Download models from HF |
 | AzCopy | v10 | Transfer model to/from Blob Storage |
 | jq | any | Parse JSON in shell scripts |
@@ -121,7 +126,8 @@ In **Settings → Secrets and variables → Actions**, add:
 | `AZURE_CLIENT_ID` | Service principal / Managed Identity client ID |
 | `AZURE_TENANT_ID` | Azure AD tenant ID |
 | `AZURE_SUBSCRIPTION_ID` | Target subscription ID |
-| `SSH_PUBLIC_KEY` | RSA public key (`ssh-keygen -t rsa -b 4096`) |
+| `SSH_PUBLIC_KEY` | RSA public key (`ssh-keygen -t rsa -b 4096`) provisioned on the VMs |
+| `SSH_PRIVATE_KEY` | Matching RSA private key – used by Ansible to SSH into the VMs |
 | `HF_TOKEN` | Hugging Face access token (read) |
 | `HF_USERNAME` | Hugging Face username |
 | `STORAGE_ACCOUNT_NAME` | *(Optional)* Azure Storage Account for model caching |
@@ -239,16 +245,22 @@ az deployment group create \
                    modelId="<owner/repo-gguf>" \
   --name           benchmark-$(date +%s)
 
-# 4. Run benchmarks (sequential)
+# 4. Run benchmarks with Ansible
 chmod +x scripts/*.sh
-./scripts/run-benchmarks.sh \
+export HF_TOKEN="hf_..."
+export HF_USERNAME="your-username"
+export MODEL_ID="<owner/repo-gguf>"
+export MODEL_FILENAME="<model-Q4_K_M.gguf>"
+
+./scripts/build-ansible-inventory.sh \
   --resource-group rg-ai-benchmark \
   --vm-names       "bm-d2ps-v6 bm-d4ps-v6" \
-  --hf-token       "hf_..." \
-  --hf-username    "your-username" \
-  --model-id       "<owner/repo-gguf>" \
-  --model-filename "<model-Q4_K_M.gguf>" \
-  --sequential     true
+  --private-key    ~/.ssh/id_rsa \
+  --inventory-file ./inventory.ini
+
+ANSIBLE_CONFIG=ansible/ansible.cfg ansible-playbook \
+  --inventory ./inventory.ini \
+  ansible/benchmark.yml
 
 # 5. Cleanup (delete deployment stack and all managed resources)
 az stack group delete \
@@ -271,7 +283,7 @@ az stack group delete \
 
 ## Benchmark Output
 
-Each VM produces structured output captured by Azure Run Command:
+Each VM produces structured output captured by the Ansible playbook:
 
 ```
 ────────────────────────────────────────────────────────────────

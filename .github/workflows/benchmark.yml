@@ -1,14 +1,17 @@
 # =============================================================================
 # AI CPU Benchmarking – GitHub Actions Workflow
 #
-# Deploys Azure VMs, waits for cloud-init, runs llama.cpp benchmarks,
-# collects results, and cleans up.
+# Deploys Azure VMs, waits for cloud-init, runs llama.cpp benchmarks via
+# Ansible (the runner acts as the Ansible control node and connects to each
+# VM over SSH through the load balancer NAT rules), collects results, and
+# cleans up.
 #
 # Secrets required (configure in Settings → Secrets):
 #   AZURE_CLIENT_ID          – Service principal or Managed Identity client ID
 #   AZURE_TENANT_ID          – Azure AD tenant ID
 #   AZURE_SUBSCRIPTION_ID    – Target subscription
-#   SSH_PUBLIC_KEY           – RSA public key for VM auth (no private key needed)
+#   SSH_PUBLIC_KEY           – RSA public key provisioned on the VMs
+#   SSH_PRIVATE_KEY          – Matching RSA private key used by Ansible (SSH)
 #   HF_TOKEN                 – Hugging Face access token (read)
 #   HF_USERNAME              – Hugging Face username
 #   STORAGE_ACCOUNT_NAME     – (optional) Azure Storage Account for model caching
@@ -162,7 +165,7 @@ jobs:
           action-on-unmanage-resourcegroups: detach
           deny-settings-mode:                none
 
-  # ─── 4. Benchmark – one job per VM via dynamic matrix ───────────────────────
+  # ─── 4. Benchmark – Ansible over SSH, one job per VM via dynamic matrix ─────
   benchmark:
     name: "Benchmark ${{ matrix.vm }}"
     runs-on: ubuntu-latest
@@ -188,20 +191,40 @@ jobs:
           tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Run benchmark on ${{ matrix.vm }}
+      - name: Install Ansible
+        run: pipx install ansible-core
+
+      - name: Write SSH private key
         run: |
-          bash scripts/run-benchmarks.sh \
-            --resource-group  "${{ needs.preflight.outputs.resource_group }}" \
-            --vm-name         "${{ matrix.vm }}" \
-            --model-id        "${{ inputs.model_id }}" \
-            --model-filename  "${{ inputs.model_filename }}" \
-            --msi-client-id   "${{ needs.deploy.outputs.identity_client_id }}" \
-            --storage-account "${{ secrets.STORAGE_ACCOUNT_NAME }}" \
-            --results-dir     "${{ runner.temp }}/benchmark-results"
+          mkdir -p ~/.ssh
+          echo "${SSH_PRIVATE_KEY}" > ~/.ssh/benchmark_key
+          chmod 600 ~/.ssh/benchmark_key
         env:
-          HF_TOKEN:             ${{ secrets.HF_TOKEN }}
-          HF_USERNAME:          ${{ secrets.HF_USERNAME }}
-          STORAGE_ACCOUNT_NAME: ${{ secrets.STORAGE_ACCOUNT_NAME }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Build Ansible inventory for ${{ matrix.vm }}
+        run: |
+          bash scripts/build-ansible-inventory.sh \
+            --resource-group "${{ needs.preflight.outputs.resource_group }}" \
+            --vm-names       "${{ matrix.vm }}" \
+            --admin-username azureuser \
+            --private-key    "${HOME}/.ssh/benchmark_key" \
+            --inventory-file "${{ runner.temp }}/inventory.ini"
+
+      - name: Run benchmark playbook on ${{ matrix.vm }}
+        run: |
+          ansible-playbook \
+            --inventory "${{ runner.temp }}/inventory.ini" \
+            ansible/benchmark.yml
+        env:
+          ANSIBLE_CONFIG:  ansible/ansible.cfg
+          HF_TOKEN:        ${{ secrets.HF_TOKEN }}
+          HF_USERNAME:     ${{ secrets.HF_USERNAME }}
+          MODEL_ID:        ${{ inputs.model_id }}
+          MODEL_FILENAME:  ${{ inputs.model_filename }}
+          MSI_CLIENT_ID:   ${{ needs.deploy.outputs.identity_client_id }}
+          STORAGE_ACCOUNT: ${{ secrets.STORAGE_ACCOUNT_NAME }}
+          RESULTS_DIR:     ${{ runner.temp }}/benchmark-results
 
       - name: Upload per-VM results
         if: always()
