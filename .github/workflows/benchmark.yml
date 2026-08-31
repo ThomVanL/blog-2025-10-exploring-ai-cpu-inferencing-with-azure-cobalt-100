@@ -197,7 +197,7 @@ jobs:
       - name: Write SSH private key
         run: |
           mkdir -p ~/.ssh
-          echo "${SSH_PRIVATE_KEY}" > ~/.ssh/benchmark_key
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/benchmark_key
           chmod 600 ~/.ssh/benchmark_key
         env:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}

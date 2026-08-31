@@ -48,7 +48,7 @@
     # survives the load balancer's 4-minute idle TCP timeout: each poll opens
     # a fresh SSH session instead of holding one connection open for hours.
     - name: Run llama.cpp benchmark (scripts/benchmark.sh)
-      ansible.builtin.script: ../scripts/benchmark.sh
+      ansible.builtin.script: "{{ playbook_dir }}/../scripts/benchmark.sh"
       environment:
         HF_TOKEN: "{{ lookup('env', 'HF_TOKEN') }}"
         HF_USERNAME: "{{ lookup('env', 'HF_USERNAME') }}"
