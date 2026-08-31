@@ -108,7 +108,7 @@ There's both a **GitHub Actions workflow** and an **Azure DevOps pipeline** in t
 |---|---|---|
 | Azure CLI | ≥ 2.60 | Deploy & manage resources |
 | Bicep CLI | ≥ 0.28 | Compile Bicep templates |
-| Ansible (ansible-core) | ≥ 2.15 | Run the benchmark playbook over SSH |
+| Ansible (ansible-core) | latest (CI installs the newest release; ≥ 2.16 required) | Run the benchmark playbook over SSH |
 | `huggingface-hub` | ≥ 0.22 | Download models from HF |
 | AzCopy | v10 | Transfer model to/from Blob Storage |
 | jq | any | Parse JSON in shell scripts |

@@ -191,8 +191,12 @@ jobs:
           tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Install Ansible
-        run: pipx install ansible-core
+      - name: Install Ansible (latest)
+        # --force upgrades any preinstalled ansible-core on the runner so we
+        # always run the latest release from PyPI.
+        run: |
+          pipx install --force ansible-core
+          ansible --version
 
       - name: Write SSH private key
         run: |
