@@ -14,7 +14,8 @@
 #   Required : HF_TOKEN, HF_USERNAME, MODEL_ID, MODEL_FILENAME
 #   Optional : STORAGE_ACCOUNT, MSI_CLIENT_ID, CACHE_CONTAINER,
 #              THREAD_COUNTS, BENCHMARK_TOKENS, BENCHMARK_PROMPT,
-#              BATCHED_PARALLEL, RESULTS_DIR, BENCHMARK_TIMEOUT
+#              BATCHED_PARALLEL, RESULTS_DIR, BENCHMARK_TIMEOUT,
+#              BENCHMARK_SERIAL
 #
 # Usage:
 #   ANSIBLE_CONFIG=ansible/ansible.cfg ansible-playbook \
@@ -25,6 +26,11 @@
   hosts: benchmark
   become: true
   gather_facts: false
+  # BENCHMARK_SERIAL controls how many VMs are benchmarked at once.
+  # "1" (default) benchmarks one VM at a time — avoids Hugging Face
+  # rate-limiting when model caching is disabled. Set to a higher number
+  # or "100%" to benchmark VMs in parallel.
+  serial: "{{ lookup('env', 'BENCHMARK_SERIAL') | default('1', true) }}"
   vars:
     # Local directory (on the control node) where per-VM results are written.
     results_dir: "{{ lookup('env', 'RESULTS_DIR') | default('./benchmark-results', true) }}"
@@ -96,9 +102,25 @@
       ansible.builtin.debug:
         msg: "{{ (benchmark_run.stdout | default('')).split('\n') }}"
 
-    - name: Fail if the benchmark did not succeed
+    # Record status instead of failing here: with `serial`, a failed batch
+    # would abort the remaining batches. A final play verifies all hosts.
+    - name: Record benchmark status
+      ansible.builtin.set_fact:
+        benchmark_failed: "{{ benchmark_run is failed }}"
+
+- name: Verify that all benchmarks succeeded
+  hosts: localhost
+  gather_facts: false
+  become: false
+  tasks:
+    - name: Fail if any benchmark did not succeed
       ansible.builtin.fail:
         msg: >-
-          Benchmark failed on {{ inventory_hostname }}:
-          {{ benchmark_run.msg | default(benchmark_run.stderr | default('unknown error')) }}
-      when: benchmark_run is failed
+          Benchmark failed on {{ item }}:
+          {{ hostvars[item].benchmark_run.msg
+             | default(hostvars[item].benchmark_run.stderr
+             | default('unknown error')) }}
+      # benchmark_failed is undefined when a host never completed the play
+      # (e.g. it was unreachable), which also counts as a failure.
+      when: hostvars[item].benchmark_failed | default(true)
+      loop: "{{ groups['benchmark'] }}"

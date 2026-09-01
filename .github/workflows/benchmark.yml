@@ -76,7 +76,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       vm_names:         ${{ steps.resolve.outputs.vm_names }}
-      vm_names_json:    ${{ steps.resolve.outputs.vm_names_json }}
       vm_skus_json_raw: ${{ steps.resolve.outputs.vm_skus_json_raw }}
       resource_group:   ${{ steps.resolve.outputs.resource_group }}
     steps:
@@ -165,20 +164,12 @@ jobs:
           action-on-unmanage-resourcegroups: detach
           deny-settings-mode:                none
 
-  # ─── 4. Benchmark – Ansible over SSH, one job per VM via dynamic matrix ─────
+  # ─── 4. Benchmark – single Ansible run against all deployed VMs ──────────────
   benchmark:
-    name: "Benchmark ${{ matrix.vm }}"
+    name: Benchmark all VMs
     runs-on: ubuntu-latest
     needs: [preflight, deploy]
     if: always() && needs.deploy.result == 'success'
-    strategy:
-      # max-parallel: 1 keeps benchmarks sequential, which avoids Hugging Face
-      # rate-limiting when model caching is disabled. Remove or increase to run
-      # VMs in parallel.
-      max-parallel: 1
-      fail-fast: false
-      matrix:
-        vm: ${{ fromJson(needs.preflight.outputs.vm_names_json) }}
     timeout-minutes: 480   # 8 hours to accommodate long-running CPU benchmarks
     steps:
       - name: Checkout
@@ -206,35 +197,39 @@ jobs:
         env:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
 
-      - name: Build Ansible inventory for ${{ matrix.vm }}
+      - name: Build Ansible inventory for all deployed VMs
         run: |
           bash scripts/build-ansible-inventory.sh \
             --resource-group "${{ needs.preflight.outputs.resource_group }}" \
-            --vm-names       "${{ matrix.vm }}" \
+            --vm-names       "${{ needs.preflight.outputs.vm_names }}" \
             --admin-username azureuser \
             --private-key    "${HOME}/.ssh/benchmark_key" \
             --inventory-file "${{ runner.temp }}/inventory.ini"
 
-      - name: Run benchmark playbook on ${{ matrix.vm }}
+      - name: Run benchmark playbook on all VMs
+        # BENCHMARK_SERIAL=1 benchmarks the VMs one at a time (avoids Hugging
+        # Face rate-limiting when model caching is disabled). Increase it, or
+        # set it to "100%", to benchmark multiple VMs in parallel.
         run: |
           ansible-playbook \
             --inventory "${{ runner.temp }}/inventory.ini" \
             ansible/benchmark.yml
         env:
-          ANSIBLE_CONFIG:  ansible/ansible.cfg
-          HF_TOKEN:        ${{ secrets.HF_TOKEN }}
-          HF_USERNAME:     ${{ secrets.HF_USERNAME }}
-          MODEL_ID:        ${{ inputs.model_id }}
-          MODEL_FILENAME:  ${{ inputs.model_filename }}
-          MSI_CLIENT_ID:   ${{ needs.deploy.outputs.identity_client_id }}
-          STORAGE_ACCOUNT: ${{ secrets.STORAGE_ACCOUNT_NAME }}
-          RESULTS_DIR:     ${{ runner.temp }}/benchmark-results
+          ANSIBLE_CONFIG:   ansible/ansible.cfg
+          BENCHMARK_SERIAL: "1"
+          HF_TOKEN:         ${{ secrets.HF_TOKEN }}
+          HF_USERNAME:      ${{ secrets.HF_USERNAME }}
+          MODEL_ID:         ${{ inputs.model_id }}
+          MODEL_FILENAME:   ${{ inputs.model_filename }}
+          MSI_CLIENT_ID:    ${{ needs.deploy.outputs.identity_client_id }}
+          STORAGE_ACCOUNT:  ${{ secrets.STORAGE_ACCOUNT_NAME }}
+          RESULTS_DIR:      ${{ runner.temp }}/benchmark-results
 
-      - name: Upload per-VM results
+      - name: Upload benchmark results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: benchmark-${{ matrix.vm }}
+          name: benchmark-results
           path: ${{ runner.temp }}/benchmark-results/
           retention-days: 30
 
@@ -245,12 +240,11 @@ jobs:
     needs: [deploy, benchmark]
     if: always() && needs.deploy.result == 'success'
     steps:
-      - name: Download all per-VM artifacts
+      - name: Download benchmark results artifact
         uses: actions/download-artifact@v4
         with:
-          pattern: benchmark-*
+          name: benchmark-results
           path: benchmark-results
-          merge-multiple: true
 
       - name: Build summary
         run: |

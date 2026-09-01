@@ -36,7 +36,7 @@ There's both a **GitHub Actions workflow** and an **Azure DevOps pipeline** in t
 │  1. Pre-flight  (resolve VM names from SKUs)        │
 │  2. Upload Model (optional – blob cache)            │
 │  3. Deploy VMs  (Bicep + AVM + deployment stack)    │
-│  4. Benchmark   (Ansible playbook over SSH per VM)  │
+│  4. Benchmark   (single Ansible run, all VMs)       │
 │  5. Cleanup     (delete deployment stack)           │
 └─────────────────────────────────────────────────────┘
            │                      │
@@ -68,7 +68,7 @@ There's both a **GitHub Actions workflow** and an **Azure DevOps pipeline** in t
 | Cloud-init vs Ansible | Cloud-init for provisioning, Ansible for benchmark orchestration | Cloud-init handles first boot; the ephemeral runner is the control node |
 | Inference engine | llama.cpp (built from source) | Native ARM/SVE optimisations for Cobalt 100 |
 | Model format | GGUF (4-bit quantised) | CPU-friendly quantisation; size varies by model |
-| Sequential toggle | Workflow parameter | Avoids Hugging Face download throttling |
+| Sequential toggle | Ansible `serial` (via `BENCHMARK_SERIAL`) | Avoids Hugging Face download throttling |
 | Model caching | Azure Blob Storage (azcopy) | Reuse model across VMs; avoids repeated HF downloads |
 | Scripts | Bash only | Simple, portable, no extra runtime |
 
@@ -137,13 +137,12 @@ In **Settings → Secrets and variables → Actions**, add:
 
 1. Go to **Actions → AI CPU Benchmark → Run workflow**
 2. Fill in the parameters (resource group, location, SKUs, model, etc.)
-3. Set **sequential = true** if you lack a Blob Storage cache (avoids HF throttling)
-4. Click **Run workflow**
+3. Click **Run workflow**
 
 ### 3. View results
 
-- Logs are printed live in the **Run Benchmarks** job
-- Results are uploaded as a workflow artifact (`benchmark-results-<run_id>`)
+- Logs are printed live in the **Benchmark all VMs** job
+- Results are uploaded as a workflow artifact (`benchmark-results`)
 - Each VM produces a `<vm-name>.txt` file; a `summary.txt` aggregates JSON output
 
 ---
@@ -219,10 +218,13 @@ export HF_USERNAME="your-username"
 
 ## Sequential vs Parallel
 
+The Ansible playbook batches VMs with `serial`, controlled by the `BENCHMARK_SERIAL`
+environment variable (the workflow sets it to `1`):
+
 | Mode | When to use |
 |---|---|
-| `sequential=true` | No blob cache; limited HF bandwidth; want predictable quota usage |
-| `sequential=false` | Blob cache enabled; fast benchmarks; want shorter total wall time |
+| `BENCHMARK_SERIAL=1` (default) | No blob cache; limited HF bandwidth; want predictable quota usage |
+| `BENCHMARK_SERIAL=100%` (all VMs at once) | Blob cache enabled; fast benchmarks; want shorter total wall time |
 
 ---
 
