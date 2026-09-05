@@ -262,13 +262,17 @@ export MODEL_FILENAME="<model-Q4_K_M.gguf>"
 ANSIBLE_CONFIG=ansible/ansible.cfg ansible-playbook \
   --inventory ./inventory.ini \
   ansible/benchmark.yml
+```
 
 The playbook keeps a durable log at `/var/tmp/ai-cpu-benchmark.log` on each VM
 and collects it even when a benchmark exceeds `BENCHMARK_TIMEOUT` (14,400
 seconds by default). This preserves completed CSV rows as partial results
 instead of producing an empty result file. Set `BENCHMARK_TIMEOUT` to a value
-that fits within the surrounding CI job timeout.
+that fits within the surrounding CI job timeout. GitHub Actions sizes
+`BENCHMARK_TIMEOUT` from the VM count so serial runs finish before the 8-hour
+job timeout.
 
+```bash
 # 5. Cleanup (delete deployment stack and all managed resources)
 az stack group delete \
   --name           benchmark-stack \
