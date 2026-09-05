@@ -16,6 +16,8 @@
 #       [--storage-account <name>]
 #       [--cache-container model-cache]
 #       [--thread-counts   "1 2 4 8"]
+#       [--benchmark-repetitions 5]
+#       [--benchmark-include-mixed true|false]
 #       [--benchmark-tokens 128]
 #       [--benchmark-prompt 512]
 #       [--batched-parallel "1 2 4"]
@@ -38,6 +40,8 @@ MSI_CLIENT_ID=""
 STORAGE_ACCOUNT=""
 CACHE_CONTAINER="model-cache"
 THREAD_COUNTS=""
+BENCHMARK_REPETITIONS="5"
+BENCHMARK_INCLUDE_MIXED="true"
 BENCHMARK_TOKENS="128"
 BENCHMARK_PROMPT="512"
 BATCHED_PARALLEL="1 2 4"
@@ -62,6 +66,8 @@ while [[ $# -gt 0 ]]; do
     --storage-account)    STORAGE_ACCOUNT="$2";   shift 2;;
     --cache-container)    CACHE_CONTAINER="$2";   shift 2;;
     --thread-counts)      THREAD_COUNTS="$2";     shift 2;;
+    --benchmark-repetitions) BENCHMARK_REPETITIONS="$2"; shift 2;;
+    --benchmark-include-mixed) BENCHMARK_INCLUDE_MIXED="$2"; shift 2;;
     --benchmark-tokens)   BENCHMARK_TOKENS="$2";  shift 2;;
     --benchmark-prompt)   BENCHMARK_PROMPT="$2";  shift 2;;
     --batched-parallel)   BATCHED_PARALLEL="$2";  shift 2;;
@@ -110,6 +116,8 @@ export STORAGE_ACCOUNT='${STORAGE_ACCOUNT}'
 export MSI_CLIENT_ID='${MSI_CLIENT_ID}'
 export CACHE_CONTAINER='${CACHE_CONTAINER}'
 export THREAD_COUNTS='${THREAD_COUNTS}'
+export BENCHMARK_REPETITIONS='${BENCHMARK_REPETITIONS}'
+export BENCHMARK_INCLUDE_MIXED='${BENCHMARK_INCLUDE_MIXED}'
 export BENCHMARK_TOKENS='${BENCHMARK_TOKENS}'
 export BENCHMARK_PROMPT='${BENCHMARK_PROMPT}'
 export BATCHED_PARALLEL='${BATCHED_PARALLEL}'

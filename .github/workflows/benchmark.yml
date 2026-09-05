@@ -43,6 +43,22 @@ on:
         description: "GGUF filename within the model repository"
         required: true
         default: "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf"
+      benchmark_thread_counts:
+        description: "Space-separated llama-bench thread counts"
+        required: false
+        default: "1 2 4 8 16"
+      benchmark_repetitions:
+        description: "Timed repetitions for each llama-bench case"
+        required: false
+        default: "5"
+      benchmark_include_mixed:
+        description: "Include the long pp256+tg1024 mixed benchmark"
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
       benchmark_tokens:
         description: "Single-stream generation tokens (tg)"
         required: false
@@ -267,6 +283,9 @@ jobs:
           HF_USERNAME:         ${{ secrets.HF_USERNAME }}
           MODEL_ID:            ${{ inputs.model_id }}
           MODEL_FILENAME:      ${{ inputs.model_filename }}
+          THREAD_COUNTS:       ${{ inputs.benchmark_thread_counts }}
+          BENCHMARK_REPETITIONS: ${{ inputs.benchmark_repetitions }}
+          BENCHMARK_INCLUDE_MIXED: ${{ inputs.benchmark_include_mixed }}
           BENCHMARK_TOKENS:    ${{ inputs.benchmark_tokens }}
           BENCHMARK_PROMPT:    ${{ inputs.benchmark_prompt }}
           BATCHED_PARALLEL:    ${{ inputs.batched_parallel }}

@@ -20,6 +20,10 @@
 #   CACHE_CONTAINER   – Blob container name            (default: model-cache)
 #   MODEL_DIR         – Local directory for models     (default: /opt/models)
 #   THREAD_COUNTS     – Space-separated thread list    (default: 1 2 4 <nproc>)
+#   BENCHMARK_REPETITIONS
+#                 – Timed repetitions per llama-bench case (default: 5)
+#   BENCHMARK_INCLUDE_MIXED
+#                 – Include the pp256+tg1024 mixed case (default: true)
 #   BENCHMARK_TOKENS  – Tokens to generate per run     (default: 128)
 #   BENCHMARK_PROMPT  – Prompt tokens to process       (default: 512)
 #   BATCHED_PARALLEL  – Space-separated parallel sequence counts for
@@ -50,6 +54,8 @@ MODEL_DIR="${MODEL_DIR:-/opt/models}"
 CACHE_CONTAINER="${CACHE_CONTAINER:-model-cache}"
 BENCHMARK_TOKENS="${BENCHMARK_TOKENS:-128}"
 BENCHMARK_PROMPT="${BENCHMARK_PROMPT:-512}"
+BENCHMARK_REPETITIONS="${BENCHMARK_REPETITIONS:-5}"
+BENCHMARK_INCLUDE_MIXED="${BENCHMARK_INCLUDE_MIXED:-true}"
 BATCHED_PARALLEL="${BATCHED_PARALLEL:-1 2 4}"
 BATCHED_BATCH_SIZE="${BATCHED_BATCH_SIZE:-128}"
 BATCHED_PROMPT_TOKENS="${BATCHED_PROMPT_TOKENS:-128}"
@@ -68,7 +74,13 @@ if [[ -z "${THREAD_COUNTS:-}" ]]; then
   if [[ " ${THREAD_COUNTS} " != *" ${NCPU} "* ]]; then
     THREAD_COUNTS="${THREAD_COUNTS} ${NCPU}"
   fi
+
 fi
+
+case "${BENCHMARK_INCLUDE_MIXED}" in
+  true|false) ;;
+  *) die "BENCHMARK_INCLUDE_MIXED must be true or false";;
+esac
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 log()  { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*"; }
@@ -189,28 +201,34 @@ log "Thread sweep  : ${THREAD_COUNTS}"
 line
 
 # Build the -t arguments for every thread count we want to test.
-THREAD_ARGS=""
+THREAD_ARGS=()
 for t in ${THREAD_COUNTS}; do
-  THREAD_ARGS="${THREAD_ARGS} -t ${t}"
+  THREAD_ARGS+=( -t "${t}" )
 done
 
 # -ngl 0       → CPU-only (no GPU offload)
 # -p           → number of prompt (prefill) tokens
 # -n           → number of tokens to generate
-# -pg 256,1024 → mixed pp+tg scenario (pp256+tg1024), matching blog benchmarks
+# -pg 256,1024 → optional mixed pp+tg scenario (pp256+tg1024), matching blog benchmarks
+# -r           → number of timed repetitions for each case
 # --output csv → machine-readable output for downstream parsing
 # --progress writes status lines to stderr; do not merge them into the CSV
 # capture on stdout (that would break DictReader / BENCHMARK_JSON_*).
 BENCH_OUTPUT_FILE="$(mktemp)"
-llama-bench \
+BENCHMARK_ARGS=(
   --model "${MODEL_PATH}" \
   -p "${BENCHMARK_PROMPT}" \
   -n "${BENCHMARK_TOKENS}" \
-  -pg 256,1024 \
   -ngl 0 \
-  ${THREAD_ARGS} \
+  "${THREAD_ARGS[@]}" \
+  -r "${BENCHMARK_REPETITIONS}" \
   --progress \
-  --output csv | tee "${BENCH_OUTPUT_FILE}"
+  --output csv
+)
+if [[ "${BENCHMARK_INCLUDE_MIXED}" == "true" ]]; then
+  BENCHMARK_ARGS+=( -pg 256,1024 )
+fi
+llama-bench "${BENCHMARK_ARGS[@]}" | tee "${BENCH_OUTPUT_FILE}"
 BENCH_OUTPUT="$(cat "${BENCH_OUTPUT_FILE}")"
 rm -f "${BENCH_OUTPUT_FILE}"
 
