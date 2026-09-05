@@ -24,6 +24,11 @@
 #   BENCHMARK_PROMPT  – Prompt tokens to process       (default: 512)
 #   BATCHED_PARALLEL  – Space-separated parallel sequence counts for
 #                       llama-batched-bench             (default: 1 2 4)
+#   BATCHED_BATCH_SIZE – llama-batched-bench logical batch size (default: 128)
+#   BATCHED_PROMPT_TOKENS
+#                     – Prompt tokens per batched sequence (default: 128)
+#   BATCHED_GENERATION_TOKENS
+#                     – Generation tokens per batched sequence (default: 128)
 #   RESULT_LOG        – Durable benchmark log path     (default: /var/tmp/ai-cpu-benchmark.log)
 # =============================================================================
 set -euo pipefail
@@ -46,6 +51,9 @@ CACHE_CONTAINER="${CACHE_CONTAINER:-model-cache}"
 BENCHMARK_TOKENS="${BENCHMARK_TOKENS:-128}"
 BENCHMARK_PROMPT="${BENCHMARK_PROMPT:-512}"
 BATCHED_PARALLEL="${BATCHED_PARALLEL:-1 2 4}"
+BATCHED_BATCH_SIZE="${BATCHED_BATCH_SIZE:-128}"
+BATCHED_PROMPT_TOKENS="${BATCHED_PROMPT_TOKENS:-128}"
+BATCHED_GENERATION_TOKENS="${BATCHED_GENERATION_TOKENS:-128}"
 NCPU="$(nproc)"
 
 # Build a default thread list: 1, 2, 4, ..., up to nproc (powers of 2).
@@ -225,8 +233,9 @@ command -v llama-batched-bench >/dev/null 2>&1 || {
 if command -v llama-batched-bench >/dev/null 2>&1; then
   line
   log "=== llama-batched-bench: multi-sequence throughput ==="
-  log "Prompt     : ${BENCHMARK_PROMPT} tokens"
-  log "Generation : ${BENCHMARK_TOKENS} tokens"
+  log "Batch size : ${BATCHED_BATCH_SIZE} tokens"
+  log "Prompt     : ${BATCHED_PROMPT_TOKENS} tokens"
+  log "Generation : ${BATCHED_GENERATION_TOKENS} tokens"
   log "Parallel   : ${BATCHED_PARALLEL}"
   log "Threads    : ${NCPU} (all vCPUs)"
   line
@@ -235,9 +244,9 @@ if command -v llama-batched-bench >/dev/null 2>&1; then
   BATCHED_NP="$(echo "${BATCHED_PARALLEL}" | tr ' ' ',')"
 
   # --threads-batch  → threads used for batch processing (all vCPUs)
-  # --batch-size 128 → token batch size per forward pass
-  # -npp 128         → prompt tokens per sequence (fixed per blog: 128)
-  # -ntg 128         → generation tokens per sequence (fixed per blog: 128)
+  # --batch-size     → token batch size per forward pass
+  # -npp             → prompt tokens per sequence
+  # -ntg             → generation tokens per sequence
   # -npl             → parallel sequences to test
   # --ctx-size 4096  → total KV context window; 16×(128+128)=4096 per blog
   # --flash-attn auto  → let the runtime select FlashAttention support
@@ -251,9 +260,9 @@ if command -v llama-batched-bench >/dev/null 2>&1; then
     --model "${MODEL_PATH}" \
     --threads "${NCPU}" \
     --threads-batch "${NCPU}" \
-    --batch-size 128 \
-    -npp 128 \
-    -ntg 128 \
+    --batch-size "${BATCHED_BATCH_SIZE}" \
+    -npp "${BATCHED_PROMPT_TOKENS}" \
+    -ntg "${BATCHED_GENERATION_TOKENS}" \
     -npl "${BATCHED_NP}" \
     --ctx-size 4096 \
     --flash-attn auto \

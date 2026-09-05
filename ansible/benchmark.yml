@@ -14,7 +14,8 @@
 #   Required : HF_TOKEN, HF_USERNAME, MODEL_ID, MODEL_FILENAME
 #   Optional : STORAGE_ACCOUNT, MSI_CLIENT_ID, CACHE_CONTAINER,
 #              MODEL_DIR, THREAD_COUNTS, BENCHMARK_TOKENS,
-#              BENCHMARK_PROMPT, BATCHED_PARALLEL, RESULTS_DIR,
+#              BENCHMARK_PROMPT, BATCHED_PARALLEL, BATCHED_BATCH_SIZE,
+#              BATCHED_PROMPT_TOKENS, BATCHED_GENERATION_TOKENS, RESULTS_DIR,
 #              BENCHMARK_TIMEOUT, BENCHMARK_SERIAL, RESULT_LOG
 #
 # Usage:
@@ -77,6 +78,9 @@
         BENCHMARK_TOKENS: "{{ lookup('env', 'BENCHMARK_TOKENS') | default('128', true) }}"
         BENCHMARK_PROMPT: "{{ lookup('env', 'BENCHMARK_PROMPT') | default('512', true) }}"
         BATCHED_PARALLEL: "{{ lookup('env', 'BATCHED_PARALLEL') | default('1 2 4', true) }}"
+        BATCHED_BATCH_SIZE: "{{ lookup('env', 'BATCHED_BATCH_SIZE') | default('128', true) }}"
+        BATCHED_PROMPT_TOKENS: "{{ lookup('env', 'BATCHED_PROMPT_TOKENS') | default('128', true) }}"
+        BATCHED_GENERATION_TOKENS: "{{ lookup('env', 'BATCHED_GENERATION_TOKENS') | default('128', true) }}"
       async: "{{ benchmark_timeout }}"
       poll: 60
       register: benchmark_run

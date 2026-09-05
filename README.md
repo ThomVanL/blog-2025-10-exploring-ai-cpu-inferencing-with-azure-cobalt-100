@@ -358,6 +358,16 @@ The JSON summary includes both `llama_bench` and `llama_batched_bench` results;
 if the batched phase fails, `llama_batched_bench_error` explains why while
 completed single-stream results remain available. Results are aggregated in
 `benchmark-results/summary.txt`.
+The batched benchmark tunables default to the values used in the blog:
+
+| Setting | Environment variable / workflow input | Default |
+|---|---|---:|
+| Logical token batch size | `BATCHED_BATCH_SIZE` / `batched_batch_size` | 128 |
+| Prompt tokens per sequence | `BATCHED_PROMPT_TOKENS` / `batched_prompt_tokens` | 128 |
+| Generation tokens per sequence | `BATCHED_GENERATION_TOKENS` / `batched_generation_tokens` | 128 |
+
+The Ansible and legacy Azure Run Command paths accept the same environment
+variables; the GitHub Actions workflow exposes them as manual dispatch inputs.
 
 ---
 

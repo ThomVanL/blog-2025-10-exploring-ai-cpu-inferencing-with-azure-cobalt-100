@@ -43,6 +43,18 @@ on:
         description: "GGUF filename within the model repository"
         required: true
         default: "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf"
+      batched_batch_size:
+        description: "llama-batched-bench logical batch size"
+        required: false
+        default: "128"
+      batched_prompt_tokens:
+        description: "Prompt tokens per batched sequence"
+        required: false
+        default: "128"
+      batched_generation_tokens:
+        description: "Generation tokens per batched sequence"
+        required: false
+        default: "128"
       upload_model_first:
         description: "Download model to Azure Blob Storage before benchmarking (requires STORAGE_ACCOUNT_NAME secret)"
         required: false
@@ -183,10 +195,15 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Install Ansible 2.21.3
-        # --force upgrades any preinstalled ansible-core on the runner.
+        # Use a runner-local venv instead of replacing a potentially
+        # preinstalled pipx environment with restricted ownership.
         run: |
-          pipx install --force ansible-core==2.21.3
-          ansible --version
+          python3 -m venv "${RUNNER_TEMP}/ansible-venv"
+          "${RUNNER_TEMP}/ansible-venv/bin/python" -m pip install \
+            --disable-pip-version-check \
+            ansible-core==2.21.3
+          echo "${RUNNER_TEMP}/ansible-venv/bin" >> "${GITHUB_PATH}"
+          "${RUNNER_TEMP}/ansible-venv/bin/ansible" --version
 
       - name: Write SSH private key
         run: |
@@ -238,6 +255,9 @@ jobs:
           HF_USERNAME:         ${{ secrets.HF_USERNAME }}
           MODEL_ID:            ${{ inputs.model_id }}
           MODEL_FILENAME:      ${{ inputs.model_filename }}
+          BATCHED_BATCH_SIZE:  ${{ inputs.batched_batch_size }}
+          BATCHED_PROMPT_TOKENS: ${{ inputs.batched_prompt_tokens }}
+          BATCHED_GENERATION_TOKENS: ${{ inputs.batched_generation_tokens }}
           MSI_CLIENT_ID:       ${{ needs.deploy.outputs.identity_client_id }}
           STORAGE_ACCOUNT:     ${{ secrets.STORAGE_ACCOUNT_NAME }}
           RESULTS_DIR:         ${{ runner.temp }}/benchmark-results
