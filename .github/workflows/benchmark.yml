@@ -195,10 +195,15 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Install Ansible 2.21.3
-        # --force upgrades any preinstalled ansible-core on the runner.
+        # Use a runner-local venv instead of replacing a potentially
+        # preinstalled pipx environment with restricted ownership.
         run: |
-          pipx install --force ansible-core==2.21.3
-          ansible --version
+          python3 -m venv "${RUNNER_TEMP}/ansible-venv"
+          "${RUNNER_TEMP}/ansible-venv/bin/python" -m pip install \
+            --disable-pip-version-check \
+            ansible-core==2.21.3
+          echo "${RUNNER_TEMP}/ansible-venv/bin" >> "${GITHUB_PATH}"
+          "${RUNNER_TEMP}/ansible-venv/bin/ansible" --version
 
       - name: Write SSH private key
         run: |
