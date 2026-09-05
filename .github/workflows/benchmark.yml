@@ -1,14 +1,17 @@
 # =============================================================================
 # AI CPU Benchmarking – GitHub Actions Workflow
 #
-# Deploys Azure VMs, waits for cloud-init, runs llama.cpp benchmarks,
-# collects results, and cleans up.
+# Deploys Azure VMs, waits for cloud-init, runs llama.cpp benchmarks via
+# Ansible (the runner acts as the Ansible control node and connects to each
+# VM over SSH through the load balancer NAT rules), collects results, and
+# cleans up.
 #
 # Secrets required (configure in Settings → Secrets):
 #   AZURE_CLIENT_ID          – Service principal or Managed Identity client ID
 #   AZURE_TENANT_ID          – Azure AD tenant ID
 #   AZURE_SUBSCRIPTION_ID    – Target subscription
-#   SSH_PUBLIC_KEY           – RSA public key for VM auth (no private key needed)
+#   SSH_PUBLIC_KEY           – RSA public key provisioned on the VMs
+#   SSH_PRIVATE_KEY          – Matching RSA private key used by Ansible (SSH)
 #   HF_TOKEN                 – Hugging Face access token (read)
 #   HF_USERNAME              – Hugging Face username
 #   STORAGE_ACCOUNT_NAME     – (optional) Azure Storage Account for model caching
@@ -35,11 +38,11 @@ on:
       model_id:
         description: "Hugging Face model repository (owner/repo)"
         required: true
-        default: "microsoft/phi-4-gguf"
+        default: "unsloth/gemma-4-E4B-it-qat-GGUF"
       model_filename:
         description: "GGUF filename within the model repository"
         required: true
-        default: "phi-4-Q4_K_S.gguf"
+        default: "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf"
       upload_model_first:
         description: "Download model to Azure Blob Storage before benchmarking (requires STORAGE_ACCOUNT_NAME secret)"
         required: false
@@ -73,7 +76,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       vm_names:         ${{ steps.resolve.outputs.vm_names }}
-      vm_names_json:    ${{ steps.resolve.outputs.vm_names_json }}
       vm_skus_json_raw: ${{ steps.resolve.outputs.vm_skus_json_raw }}
       resource_group:   ${{ steps.resolve.outputs.resource_group }}
     steps:
@@ -162,20 +164,12 @@ jobs:
           action-on-unmanage-resourcegroups: detach
           deny-settings-mode:                none
 
-  # ─── 4. Benchmark – one job per VM via dynamic matrix ───────────────────────
+  # ─── 4. Benchmark – single Ansible run against all deployed VMs ──────────────
   benchmark:
-    name: "Benchmark ${{ matrix.vm }}"
+    name: Benchmark all VMs
     runs-on: ubuntu-latest
     needs: [preflight, deploy]
     if: always() && needs.deploy.result == 'success'
-    strategy:
-      # max-parallel: 1 keeps benchmarks sequential, which avoids Hugging Face
-      # rate-limiting when model caching is disabled. Remove or increase to run
-      # VMs in parallel.
-      max-parallel: 1
-      fail-fast: false
-      matrix:
-        vm: ${{ fromJson(needs.preflight.outputs.vm_names_json) }}
     timeout-minutes: 480   # 8 hours to accommodate long-running CPU benchmarks
     steps:
       - name: Checkout
@@ -188,26 +182,71 @@ jobs:
           tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Run benchmark on ${{ matrix.vm }}
+      - name: Install Ansible 2.21.3
+        # --force upgrades any preinstalled ansible-core on the runner.
         run: |
-          bash scripts/run-benchmarks.sh \
-            --resource-group  "${{ needs.preflight.outputs.resource_group }}" \
-            --vm-name         "${{ matrix.vm }}" \
-            --model-id        "${{ inputs.model_id }}" \
-            --model-filename  "${{ inputs.model_filename }}" \
-            --msi-client-id   "${{ needs.deploy.outputs.identity_client_id }}" \
-            --storage-account "${{ secrets.STORAGE_ACCOUNT_NAME }}" \
-            --results-dir     "${{ runner.temp }}/benchmark-results"
-        env:
-          HF_TOKEN:             ${{ secrets.HF_TOKEN }}
-          HF_USERNAME:          ${{ secrets.HF_USERNAME }}
-          STORAGE_ACCOUNT_NAME: ${{ secrets.STORAGE_ACCOUNT_NAME }}
+          pipx install --force ansible-core==2.21.3
+          ansible --version
 
-      - name: Upload per-VM results
+      - name: Write SSH private key
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/benchmark_key
+          chmod 600 ~/.ssh/benchmark_key
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Build Ansible inventory for all deployed VMs
+        run: |
+          bash scripts/build-ansible-inventory.sh \
+            --resource-group "${{ needs.preflight.outputs.resource_group }}" \
+            --vm-names       "${{ needs.preflight.outputs.vm_names }}" \
+            --admin-username azureuser \
+            --private-key    "${HOME}/.ssh/benchmark_key" \
+            --inventory-file "${{ runner.temp }}/inventory.ini"
+
+      # Size async timeout so serial VMs finish (and slurp logs) before the
+      # 480-minute job timeout kills ansible-playbook. A job-level kill skips
+      # log collection and then cleanup deletes the VMs.
+      - name: Size per-VM benchmark timeout
+        id: timeout
+        run: |
+          VM_COUNT=$(echo "${{ needs.preflight.outputs.vm_names }}" | wc -w)
+          if [ "${VM_COUNT}" -lt 1 ]; then VM_COUNT=1; fi
+          JOB_SECONDS=$((480 * 60))
+          # Runner setup, inventory, cloud-init wait on the first VM, slurp.
+          OVERHEAD_SECONDS=$((40 * 60))
+          PER_VM=$(( (JOB_SECONDS - OVERHEAD_SECONDS) / VM_COUNT ))
+          if [ "${PER_VM}" -lt 1800 ]; then PER_VM=1800; fi
+          if [ "${PER_VM}" -gt 14400 ]; then PER_VM=14400; fi
+          echo "per_vm=${PER_VM}" >> "${GITHUB_OUTPUT}"
+          echo "BENCHMARK_TIMEOUT=${PER_VM}s (${VM_COUNT} VMs, 480m job, 40m overhead)"
+
+      - name: Run benchmark playbook on all VMs
+        # BENCHMARK_SERIAL=1 benchmarks the VMs one at a time (avoids Hugging
+        # Face rate-limiting when model caching is disabled). Increase it, or
+        # set it to "100%", to benchmark multiple VMs in parallel.
+        run: |
+          ansible-playbook \
+            --inventory "${{ runner.temp }}/inventory.ini" \
+            ansible/benchmark.yml
+        env:
+          ANSIBLE_CONFIG:      ansible/ansible.cfg
+          BENCHMARK_SERIAL:    "1"
+          BENCHMARK_TIMEOUT:   ${{ steps.timeout.outputs.per_vm }}
+          HF_TOKEN:            ${{ secrets.HF_TOKEN }}
+          HF_USERNAME:         ${{ secrets.HF_USERNAME }}
+          MODEL_ID:            ${{ inputs.model_id }}
+          MODEL_FILENAME:      ${{ inputs.model_filename }}
+          MSI_CLIENT_ID:       ${{ needs.deploy.outputs.identity_client_id }}
+          STORAGE_ACCOUNT:     ${{ secrets.STORAGE_ACCOUNT_NAME }}
+          RESULTS_DIR:         ${{ runner.temp }}/benchmark-results
+
+      - name: Upload benchmark results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: benchmark-${{ matrix.vm }}
+          name: benchmark-results
           path: ${{ runner.temp }}/benchmark-results/
           retention-days: 30
 
@@ -218,12 +257,11 @@ jobs:
     needs: [deploy, benchmark]
     if: always() && needs.deploy.result == 'success'
     steps:
-      - name: Download all per-VM artifacts
+      - name: Download benchmark results artifact
         uses: actions/download-artifact@v4
         with:
-          pattern: benchmark-*
+          name: benchmark-results
           path: benchmark-results
-          merge-multiple: true
 
       - name: Build summary
         run: |

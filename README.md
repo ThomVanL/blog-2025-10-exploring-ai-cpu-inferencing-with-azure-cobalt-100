@@ -6,7 +6,7 @@ A tool repository for my [Exploring AI CPU-Inferencing with Azure Cobalt 100](ht
 
 > [!NOTE]
 >
-> Looking back at this, I probably should have used Ansible over `az vm run-command`.
+> Looking back at this, I probably should have used Ansible over `az vm run-command` — so the GitHub Actions workflow now does exactly that: the runner acts as an Ansible control node and runs `ansible/benchmark.yml` against each VM over SSH. The Azure DevOps pipeline still uses the original `az vm run-command` approach (`scripts/run-benchmarks.sh`).
 
 There's both a **GitHub Actions workflow** and an **Azure DevOps pipeline** in there if you want to orchestrate the whole thing end-to-end. If you'd rather just grab the individual scripts in the `scripts/` folder and run them by hand, that works just fine too.
 
@@ -36,7 +36,7 @@ There's both a **GitHub Actions workflow** and an **Azure DevOps pipeline** in t
 │  1. Pre-flight  (resolve VM names from SKUs)        │
 │  2. Upload Model (optional – blob cache)            │
 │  3. Deploy VMs  (Bicep + AVM + deployment stack)    │
-│  4. Benchmark   (Azure Run Command per VM)          │
+│  4. Benchmark   (single Ansible run, all VMs)       │
 │  5. Cleanup     (delete deployment stack)           │
 └─────────────────────────────────────────────────────┘
            │                      │
@@ -54,8 +54,8 @@ There's both a **GitHub Actions workflow** and an **Azure DevOps pipeline** in t
   │  ┌─────▼─────┐  │
   │  │ bm-d2ps.. │──┼── cloud-init: llama.cpp + HF CLI
   │  │ bm-d4ps.. │  │
-  │  │ bm-d8ps.. │  │   Azure Run Command injects
-  │  │ bm-d16ps. │  │   benchmark.sh → captures output
+  │  │ bm-d8ps.. │  │   Ansible (SSH via LB NAT)
+  │  │ bm-d16ps. │  │   runs benchmark.sh → captures output
   │  └───────────┘  │
   └─────────────────┘
 ```
@@ -64,11 +64,11 @@ There's both a **GitHub Actions workflow** and an **Azure DevOps pipeline** in t
 
 | Decision | Choice | Reason |
 |---|---|---|
-| Execution method | Azure Run Command (async) | No public IP / SSH needed; captured output |
-| Cloud-init vs Ansible | Cloud-init | Simpler; no control node required |
+| Execution method | Ansible over SSH (GitHub Actions) / Azure Run Command (Azure Pipelines) | Runner acts as control node; SSH via LB NAT rules; captured output |
+| Cloud-init vs Ansible | Cloud-init for provisioning, Ansible for benchmark orchestration | Cloud-init handles first boot; the ephemeral runner is the control node |
 | Inference engine | llama.cpp (built from source) | Native ARM/SVE optimisations for Cobalt 100 |
 | Model format | GGUF (4-bit quantised) | CPU-friendly quantisation; size varies by model |
-| Sequential toggle | Workflow parameter | Avoids Hugging Face download throttling |
+| Sequential toggle | Ansible `serial` (via `BENCHMARK_SERIAL`) | Avoids Hugging Face download throttling |
 | Model caching | Azure Blob Storage (azcopy) | Reuse model across VMs; avoids repeated HF downloads |
 | Scripts | Bash only | Simple, portable, no extra runtime |
 
@@ -83,9 +83,14 @@ There's both a **GitHub Actions workflow** and an **Azure DevOps pipeline** in t
 │   ├── main.bicepparam     # Default parameter values
 │   └── assets/
 │       └── cloud-init.yaml # Cloud-init: install llama.cpp, HF CLI, azcopy
+├── ansible/
+│   ├── ansible.cfg         # SSH keepalives (LB idle timeout), no host key checks
+│   └── benchmark.yml       # Playbook: wait for cloud-init, run benchmark.sh, fetch results
 ├── scripts/
-│   ├── benchmark.sh        # Benchmark runner (executed ON the VM via Run Command)
-│   ├── run-benchmarks.sh   # Orchestration: submit Run Commands, collect results
+│   ├── benchmark.sh        # Benchmark runner (executed ON the VM)
+│   ├── build-ansible-inventory.sh # Resolve LB public IP + SSH NAT ports into an inventory
+│   ├── setup-github-oidc.sh # Create Entra app + GitHub Actions OIDC trust
+│   ├── run-benchmarks.sh   # Legacy Run Command orchestration (still used by Azure Pipelines)
 │   └── upload-model.sh     # Pre-upload GGUF model to Azure Blob Storage
 ├── .devcontainer
 │   └── devcontainer.json   # Dev container configuration
@@ -104,6 +109,7 @@ There's both a **GitHub Actions workflow** and an **Azure DevOps pipeline** in t
 |---|---|---|
 | Azure CLI | ≥ 2.60 | Deploy & manage resources |
 | Bicep CLI | ≥ 0.28 | Compile Bicep templates |
+| Ansible (ansible-core) | 2.21.3 (CI and devcontainer) | Run the benchmark playbook over SSH |
 | `huggingface-hub` | ≥ 0.22 | Download models from HF |
 | AzCopy | v10 | Transfer model to/from Blob Storage |
 | jq | any | Parse JSON in shell scripts |
@@ -112,7 +118,36 @@ There's both a **GitHub Actions workflow** and an **Azure DevOps pipeline** in t
 
 ## Quick Start
 
-### 1. Configure secrets (GitHub)
+### 1. Create the Azure workload identity (one-time)
+
+The GitHub Actions workflow uses Microsoft Entra workload identity federation,
+not a client secret. After installing Azure CLI and `jq`, sign in from a
+trusted local machine and run:
+
+```bash
+az login
+
+bash scripts/setup-github-oidc.sh \
+  --app-name ai-cpu-benchmark-github \
+  --owner ThomVanL \
+  --repo blog-2025-10-exploring-ai-cpu-inferencing-with-azure-cobalt-100 \
+  --branch main
+```
+
+The script creates an Entra app registration, its service principal, a
+federated credential for the selected GitHub branch, and a `Contributor`
+assignment at the current subscription scope. Pass `--scope
+/subscriptions/SUBSCRIPTION_ID/resourceGroups/RESOURCE_GROUP` to reduce the
+scope when the resource group already exists. Pass `--subject` for an
+environment, pull request, tag, or other GitHub OIDC subject pattern.
+
+The default subscription-level role is needed by this workflow because it can
+create the resource group. Use a narrower resource-group scope when the
+resource group is created separately and the workflow no longer needs
+subscription-level access. Review the role and scope before confirming the
+assignment.
+
+### 2. Configure secrets (GitHub)
 
 In **Settings → Secrets and variables → Actions**, add:
 
@@ -121,23 +156,23 @@ In **Settings → Secrets and variables → Actions**, add:
 | `AZURE_CLIENT_ID` | Service principal / Managed Identity client ID |
 | `AZURE_TENANT_ID` | Azure AD tenant ID |
 | `AZURE_SUBSCRIPTION_ID` | Target subscription ID |
-| `SSH_PUBLIC_KEY` | RSA public key (`ssh-keygen -t rsa -b 4096`) |
+| `SSH_PUBLIC_KEY` | RSA public key (`ssh-keygen -t rsa -b 4096`) provisioned on the VMs |
+| `SSH_PRIVATE_KEY` | Matching RSA private key – used by Ansible to SSH into the VMs |
 | `HF_TOKEN` | Hugging Face access token (read) |
 | `HF_USERNAME` | Hugging Face username |
 | `STORAGE_ACCOUNT_NAME` | *(Optional)* Azure Storage Account for model caching |
 | `STORAGE_SAS_TOKEN` | *(Optional)* SAS token for the storage account |
 
-### 2. Run the workflow
+### 3. Run the workflow
 
 1. Go to **Actions → AI CPU Benchmark → Run workflow**
 2. Fill in the parameters (resource group, location, SKUs, model, etc.)
-3. Set **sequential = true** if you lack a Blob Storage cache (avoids HF throttling)
-4. Click **Run workflow**
+3. Click **Run workflow**
 
-### 3. View results
+### 4. View results
 
-- Logs are printed live in the **Run Benchmarks** job
-- Results are uploaded as a workflow artifact (`benchmark-results-<run_id>`)
+- Logs are printed live in the **Benchmark all VMs** job
+- Results are uploaded as a workflow artifact (`benchmark-results`)
 - Each VM produces a `<vm-name>.txt` file; a `summary.txt` aggregates JSON output
 
 ---
@@ -173,14 +208,13 @@ usage is the largest SKU's vCPU count (16 for the default list).
 
 ## Model Selection
 
-Default model: **microsoft/phi-4-gguf** – `phi-4-Q4_K_S.gguf` (~8 GB)
+Default model: **unsloth/gemma-4-E4B-it-qat-GGUF** – `gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf` (~4.2 GB)
 
 Other options:
 
 | Model | Repo | File | Size (Q4) |
 |---|---|---|---|
-| Phi-4 | `microsoft/phi-4-gguf` | `phi-4-Q4_K_S.gguf` | ~8 GB |
-| Phi-4 | `microsoft/phi-4-gguf` | `phi-4-Q4_K_S.gguf` | ~8 GB |
+| Gemma 4 E4B IT QAT | `unsloth/gemma-4-E4B-it-qat-GGUF` | `gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf` | ~4.2 GB |
 | Meta-Llama-3-8B-Instruct | `QuantFactory/Meta-Llama-3-8B-Instruct-GGUF` | `Meta-Llama-3-8B-Instruct.Q4_0.gguf` | ~4 GB |
 
 Use the model cache (Blob Storage) for models > 5 GB to avoid HF throttling.
@@ -213,10 +247,13 @@ export HF_USERNAME="your-username"
 
 ## Sequential vs Parallel
 
+The Ansible playbook batches VMs with `serial`, controlled by the `BENCHMARK_SERIAL`
+environment variable (the workflow sets it to `1`):
+
 | Mode | When to use |
 |---|---|
-| `sequential=true` | No blob cache; limited HF bandwidth; want predictable quota usage |
-| `sequential=false` | Blob cache enabled; fast benchmarks; want shorter total wall time |
+| `BENCHMARK_SERIAL=1` (default) | No blob cache; limited HF bandwidth; want predictable quota usage |
+| `BENCHMARK_SERIAL=100%` (all VMs at once) | Blob cache enabled; fast benchmarks; want shorter total wall time |
 
 ---
 
@@ -239,17 +276,35 @@ az deployment group create \
                    modelId="<owner/repo-gguf>" \
   --name           benchmark-$(date +%s)
 
-# 4. Run benchmarks (sequential)
+# 4. Run benchmarks with Ansible
 chmod +x scripts/*.sh
-./scripts/run-benchmarks.sh \
+export HF_TOKEN="hf_..."
+export HF_USERNAME="your-username"
+export MODEL_ID="<owner/repo-gguf>"
+export MODEL_FILENAME="<model-Q4_K_M.gguf>"
+
+./scripts/build-ansible-inventory.sh \
   --resource-group rg-ai-benchmark \
   --vm-names       "bm-d2ps-v6 bm-d4ps-v6" \
-  --hf-token       "hf_..." \
-  --hf-username    "your-username" \
-  --model-id       "<owner/repo-gguf>" \
-  --model-filename "<model-Q4_K_M.gguf>" \
-  --sequential     true
+  --private-key    ~/.ssh/id_rsa \
+  --inventory-file ./inventory.ini
 
+ANSIBLE_CONFIG=ansible/ansible.cfg ansible-playbook \
+  --inventory ./inventory.ini \
+  ansible/benchmark.yml
+```
+
+The playbook keeps a durable log at `/var/tmp/ai-cpu-benchmark.log` on each VM
+and collects it even when a benchmark exceeds `BENCHMARK_TIMEOUT` (14,400
+seconds by default). This preserves completed CSV rows as partial results
+instead of producing an empty result file. Set `BENCHMARK_TIMEOUT` to a value
+that fits within the surrounding CI job timeout. GitHub Actions sizes
+`BENCHMARK_TIMEOUT` from the VM count so serial runs finish before the 8-hour
+job timeout. If the batched benchmark fails after the single-stream sweep,
+the script still emits the structured JSON summary and records the batched
+error so Ansible can save the partial result artifact.
+
+```bash
 # 5. Cleanup (delete deployment stack and all managed resources)
 az stack group delete \
   --name           benchmark-stack \
@@ -271,7 +326,7 @@ az stack group delete \
 
 ## Benchmark Output
 
-Each VM produces structured output captured by Azure Run Command:
+Each VM produces structured output captured by the Ansible playbook:
 
 ```
 ────────────────────────────────────────────────────────────────
@@ -299,7 +354,10 @@ BENCHMARK_JSON_START
 BENCHMARK_JSON_END
 ```
 
-Results are aggregated in `benchmark-results/summary.txt`.
+The JSON summary includes both `llama_bench` and `llama_batched_bench` results;
+if the batched phase fails, `llama_batched_bench_error` explains why while
+completed single-stream results remain available. Results are aggregated in
+`benchmark-results/summary.txt`.
 
 ---
 
@@ -307,5 +365,5 @@ Results are aggregated in `benchmark-results/summary.txt`.
 
 - [Exploring AI CPU-Inferencing with Azure Cobalt 100](https://thomasvanlaere.com/posts/2025/10/exploring-ai-cpu-inferencing-with-azure-cobalt-100/) – blog post this repository accompanies
 - [llama.cpp](https://github.com/ggerganov/llama.cpp) – inference engine used for benchmarking
-- [microsoft/phi-4-gguf](https://huggingface.co/microsoft/phi-4-gguf) – default benchmark model on Hugging Face
+- [unsloth/gemma-4-E4B-it-qat-GGUF](https://huggingface.co/unsloth/gemma-4-E4B-it-qat-GGUF) – default benchmark model on Hugging Face
 - [Standard Dpsv6 series](https://learn.microsoft.com/azure/virtual-machines/dpsv6-series) – Azure Cobalt 100 VM SKU documentation

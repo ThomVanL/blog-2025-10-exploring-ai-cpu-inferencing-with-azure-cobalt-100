@@ -2,14 +2,15 @@
 # =============================================================================
 # benchmark.sh – Run AI CPU inference benchmarks with llama.cpp on a single VM.
 #
-# This script is executed ON THE VM via an Azure Run Command.
+# This script is executed ON THE VM – via Ansible (ansible/benchmark.yml) in
+# GitHub Actions, or via an Azure Run Command in Azure Pipelines.
 # It is NOT meant to be run directly on your workstation.
 #
 # Required environment variables:
 #   HF_TOKEN          – Hugging Face access token
 #   HF_USERNAME       – Hugging Face username
-#   MODEL_ID          – HF repo id  (e.g. microsoft/phi-4-gguf, QuantFactory/Meta-Llama-3-8B-Instruct-GGUF)
-#   MODEL_FILENAME    – GGUF file   (e.g. phi-4-Q4_K_S.gguf, Meta-Llama-3-8B-Instruct.Q4_0.gguf)
+#   MODEL_ID          – HF repo id  (e.g. unsloth/gemma-4-E4B-it-qat-GGUF)
+#   MODEL_FILENAME    – GGUF file   (e.g. gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf)
 #
 # Optional environment variables:
 #   STORAGE_ACCOUNT   – Azure Storage Account name for model caching
@@ -23,15 +24,28 @@
 #   BENCHMARK_PROMPT  – Prompt tokens to process       (default: 512)
 #   BATCHED_PARALLEL  – Space-separated parallel sequence counts for
 #                       llama-batched-bench             (default: 1 2 4)
+#   RESULT_LOG        – Durable benchmark log path     (default: /var/tmp/ai-cpu-benchmark.log)
 # =============================================================================
 set -euo pipefail
+
+# Keep a durable copy on the VM so the Ansible controller can collect partial
+# results if the asynchronous benchmark exceeds its timeout. Line-buffer tee so
+# completed CSV rows are visible to slurp before the process substitution exits.
+RESULT_LOG="${RESULT_LOG:-/var/tmp/ai-cpu-benchmark.log}"
+mkdir -p "$(dirname "${RESULT_LOG}")"
+: > "${RESULT_LOG}"
+if command -v stdbuf >/dev/null 2>&1; then
+  exec > >(stdbuf -oL -eL tee -a "${RESULT_LOG}") 2>&1
+else
+  exec > >(tee -a "${RESULT_LOG}") 2>&1
+fi
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
 MODEL_DIR="${MODEL_DIR:-/opt/models}"
 CACHE_CONTAINER="${CACHE_CONTAINER:-model-cache}"
 BENCHMARK_TOKENS="${BENCHMARK_TOKENS:-128}"
 BENCHMARK_PROMPT="${BENCHMARK_PROMPT:-512}"
-BATCHED_PARALLEL="${BATCHED_PARALLEL:-1 2 4 8 16}"
+BATCHED_PARALLEL="${BATCHED_PARALLEL:-1 2 4}"
 NCPU="$(nproc)"
 
 # Build a default thread list: 1, 2, 4, ..., up to nproc (powers of 2).
@@ -177,14 +191,20 @@ done
 # -n           → number of tokens to generate
 # -pg 256,1024 → mixed pp+tg scenario (pp256+tg1024), matching blog benchmarks
 # --output csv → machine-readable output for downstream parsing
-BENCH_OUTPUT="$(llama-bench \
+# --progress writes status lines to stderr; do not merge them into the CSV
+# capture on stdout (that would break DictReader / BENCHMARK_JSON_*).
+BENCH_OUTPUT_FILE="$(mktemp)"
+llama-bench \
   --model "${MODEL_PATH}" \
   -p "${BENCHMARK_PROMPT}" \
   -n "${BENCHMARK_TOKENS}" \
   -pg 256,1024 \
   -ngl 0 \
   ${THREAD_ARGS} \
-  --output csv 2>&1)"
+  --progress \
+  --output csv | tee "${BENCH_OUTPUT_FILE}"
+BENCH_OUTPUT="$(cat "${BENCH_OUTPUT_FILE}")"
+rm -f "${BENCH_OUTPUT_FILE}"
 
 line
 log "=== llama-bench results ==="
@@ -220,9 +240,14 @@ if command -v llama-batched-bench >/dev/null 2>&1; then
   # -ntg 128         → generation tokens per sequence (fixed per blog: 128)
   # -npl             → parallel sequences to test
   # --ctx-size 4096  → total KV context window; 16×(128+128)=4096 per blog
-  # --flash-attn     → FlashAttention kernels for faster attention
-  # --mlock          → pin model in RAM (avoids page-swap during benchmarks)
-  BATCHED_OUTPUT="$(llama-batched-bench \
+  # --flash-attn auto  → let the runtime select FlashAttention support
+  # --load-mode mlock  → pin model in RAM (avoids page-swap during benchmarks)
+  # --output-format jsonl → machine-readable output for downstream parsing
+  BATCHED_OUTPUT_FILE="$(mktemp)"
+  BATCHED_EXIT=0
+  BATCHED_ERROR=""
+  set +e
+  llama-batched-bench \
     --model "${MODEL_PATH}" \
     --threads "${NCPU}" \
     --threads-batch "${NCPU}" \
@@ -231,20 +256,29 @@ if command -v llama-batched-bench >/dev/null 2>&1; then
     -ntg 128 \
     -npl "${BATCHED_NP}" \
     --ctx-size 4096 \
-    --flash-attn \
-    --mlock \
-    --output-format csv 2>&1)"
+    --flash-attn auto \
+    --load-mode mlock \
+    --output-format jsonl | tee "${BATCHED_OUTPUT_FILE}"
+  BATCHED_EXIT=$?
+  set -e
+  BATCHED_OUTPUT="$(cat "${BATCHED_OUTPUT_FILE}")"
+  rm -f "${BATCHED_OUTPUT_FILE}"
 
   line
   log "=== llama-batched-bench results ==="
   echo "${BATCHED_OUTPUT}"
+  if (( BATCHED_EXIT != 0 )); then
+    BATCHED_ERROR="llama-batched-bench exited with status ${BATCHED_EXIT}"
+    log "ERROR: ${BATCHED_ERROR}"
+  fi
   line
 fi
 
 # ── Emit structured JSON summary ──────────────────────────────────────────────
-# Export CSV outputs for the Python snippet below.
+# Export benchmark outputs for the Python snippet below.
 export BENCH_CSV="${BENCH_OUTPUT}"
 export BATCHED_OUT="${BATCHED_OUTPUT:-}"
+export BATCHED_ERROR="${BATCHED_ERROR:-}"
 RESULT_JSON="$(python3 - <<'PYEOF'
 import sys, csv, json, io, os
 
@@ -255,6 +289,20 @@ if not raw:
 def _parse_batched(text):
     if not text:
         return []
+    json_rows = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            json_rows = []
+            break
+        if isinstance(value, dict):
+            json_rows.append(value)
+    if json_rows:
+        return json_rows
     try:
         reader = csv.DictReader(io.StringIO(text))
         return [row for row in reader if any(v.strip() for v in row.values())]
@@ -284,6 +332,9 @@ try:
         "llama_bench": rows,
         "llama_batched_bench": _parse_batched(os.environ.get("BATCHED_OUT", "")),
     }
+    batched_error = os.environ.get("BATCHED_ERROR", "")
+    if batched_error:
+        summary["llama_batched_bench_error"] = batched_error
     print("BENCHMARK_JSON_START")
     print(json.dumps(summary, indent=2))
     print("BENCHMARK_JSON_END")
@@ -294,3 +345,6 @@ PYEOF
 
 echo "${RESULT_JSON}"
 log "=== Benchmark complete ==="
+if [[ "${BATCHED_EXIT:-0}" -ne 0 ]]; then
+  exit "${BATCHED_EXIT}"
+fi

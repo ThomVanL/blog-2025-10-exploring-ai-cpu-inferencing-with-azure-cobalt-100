@@ -3,8 +3,8 @@
 // Override these to match your environment before deploying.
 //
 // NOTE: Hugging Face credentials (hfUsername, hfToken) and model details
-// (modelFilename) are NOT Bicep parameters – they are injected at runtime by
-// the workflow as Azure Run Command environment variables in benchmark.sh.
+// (modelFilename) are NOT Bicep parameters – they are injected at runtime
+// into benchmark.sh by the workflow (Ansible env vars or Azure Run Command).
 // =============================================================================
 using './main.bicep'
 
@@ -37,7 +37,7 @@ param adminUsername = 'azureuser'
 
 // Hugging Face model to benchmark – stored as a VM tag for reference.
 // The actual download uses modelFilename, passed via benchmark.sh at runtime.
-param modelId = 'microsoft/phi-4-gguf'
+param modelId = 'unsloth/gemma-4-E4B-it-qat-GGUF'
 
 // Azure Blob Storage for model caching.  Provide an existing storage account
 // name to enable caching and avoid repeated downloads from Hugging Face.
