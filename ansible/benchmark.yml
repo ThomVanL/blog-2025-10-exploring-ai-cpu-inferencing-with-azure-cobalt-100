@@ -13,8 +13,9 @@
 # (mirroring the env vars consumed by scripts/benchmark.sh):
 #   Required : HF_TOKEN, HF_USERNAME, MODEL_ID, MODEL_FILENAME
 #   Optional : STORAGE_ACCOUNT, MSI_CLIENT_ID, CACHE_CONTAINER,
-#              MODEL_DIR, THREAD_COUNTS, BENCHMARK_TOKENS,
-#              BENCHMARK_PROMPT, BATCHED_PARALLEL, BATCHED_BATCH_SIZE,
+#              MODEL_DIR, THREAD_COUNTS, BENCHMARK_REPETITIONS,
+#              BENCHMARK_INCLUDE_MIXED, BENCHMARK_TOKENS, BENCHMARK_PROMPT,
+#              BATCHED_PARALLEL, BATCHED_BATCH_SIZE,
 #              BATCHED_PROMPT_TOKENS, BATCHED_GENERATION_TOKENS, RESULTS_DIR,
 #              BENCHMARK_TIMEOUT, BENCHMARK_SERIAL, RESULT_LOG
 #
@@ -75,6 +76,8 @@
         RESULT_LOG: "{{ benchmark_log_path }}"
         CACHE_CONTAINER: "{{ lookup('env', 'CACHE_CONTAINER') | default('model-cache', true) }}"
         THREAD_COUNTS: "{{ lookup('env', 'THREAD_COUNTS') }}"
+        BENCHMARK_REPETITIONS: "{{ lookup('env', 'BENCHMARK_REPETITIONS') | default('5', true) }}"
+        BENCHMARK_INCLUDE_MIXED: "{{ lookup('env', 'BENCHMARK_INCLUDE_MIXED') | default('true', true) }}"
         BENCHMARK_TOKENS: "{{ lookup('env', 'BENCHMARK_TOKENS') | default('128', true) }}"
         BENCHMARK_PROMPT: "{{ lookup('env', 'BENCHMARK_PROMPT') | default('512', true) }}"
         BATCHED_PARALLEL: "{{ lookup('env', 'BATCHED_PARALLEL') | default('1 2 4', true) }}"

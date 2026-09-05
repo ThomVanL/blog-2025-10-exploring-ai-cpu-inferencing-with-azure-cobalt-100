@@ -362,6 +362,9 @@ The benchmark tunables use the following workflow defaults:
 
 | Setting | Environment variable / workflow input | Default |
 |---|---|---:|
+| Single-stream thread sweep | `THREAD_COUNTS` / `benchmark_thread_counts` | `1 2 4 8 16` |
+| Timed repetitions per single-stream case | `BENCHMARK_REPETITIONS` / `benchmark_repetitions` | 5 |
+| Include mixed `pp256+tg1024` case | `BENCHMARK_INCLUDE_MIXED` / `benchmark_include_mixed` | `true` |
 | Single-stream generation tokens (`tg`) | `BENCHMARK_TOKENS` / `benchmark_tokens` | 128 |
 | Single-stream prompt-processing tokens (`pp`) | `BENCHMARK_PROMPT` / `benchmark_prompt` | 512 |
 | Parallel sequences (`npl`) for batched-bench | `BATCHED_PARALLEL` / `batched_parallel` | `1 2 4` |
@@ -375,6 +378,11 @@ variables; the GitHub Actions workflow exposes them as manual dispatch inputs.
 comma-separated `-npl` form expected by `llama-batched-bench`.
 The blog's full D64ps_v6 example also exercises `npl` values 8 and 16; add
 `8 16` to this input when reproducing that sweep.
+
+For a faster smoke run, dispatch the workflow with
+`benchmark_thread_counts=16`, `benchmark_repetitions=1`, and
+`benchmark_include_mixed=false`. This skips the long mixed workload and runs
+only the selected single-stream case.
 
 ---
 
