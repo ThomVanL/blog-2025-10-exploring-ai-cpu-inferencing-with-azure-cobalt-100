@@ -35,7 +35,7 @@ param sshPublicKey string
 Hugging Face model repository ID (owner/repo-name) used only for tagging VMs.
 The actual model download is performed by benchmark.sh at runtime via Azure Run Command.
 ''')
-param modelId string = 'microsoft/phi-4-gguf'
+param modelId string = 'unsloth/gemma-4-E4B-it-qat-GGUF'
 
 @description('''
 Name of an existing Azure Storage Account used to cache the downloaded GGUF model.

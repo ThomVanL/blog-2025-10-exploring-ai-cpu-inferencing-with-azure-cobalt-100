@@ -108,7 +108,7 @@ There's both a **GitHub Actions workflow** and an **Azure DevOps pipeline** in t
 |---|---|---|
 | Azure CLI | ≥ 2.60 | Deploy & manage resources |
 | Bicep CLI | ≥ 0.28 | Compile Bicep templates |
-| Ansible (ansible-core) | latest (CI installs the newest release; ≥ 2.16 required) | Run the benchmark playbook over SSH |
+| Ansible (ansible-core) | 2.21.3 (CI and devcontainer) | Run the benchmark playbook over SSH |
 | `huggingface-hub` | ≥ 0.22 | Download models from HF |
 | AzCopy | v10 | Transfer model to/from Blob Storage |
 | jq | any | Parse JSON in shell scripts |
@@ -178,14 +178,13 @@ usage is the largest SKU's vCPU count (16 for the default list).
 
 ## Model Selection
 
-Default model: **microsoft/phi-4-gguf** – `phi-4-Q4_K_S.gguf` (~8 GB)
+Default model: **unsloth/gemma-4-E4B-it-qat-GGUF** – `gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf` (~4.2 GB)
 
 Other options:
 
 | Model | Repo | File | Size (Q4) |
 |---|---|---|---|
-| Phi-4 | `microsoft/phi-4-gguf` | `phi-4-Q4_K_S.gguf` | ~8 GB |
-| Phi-4 | `microsoft/phi-4-gguf` | `phi-4-Q4_K_S.gguf` | ~8 GB |
+| Gemma 4 E4B IT QAT | `unsloth/gemma-4-E4B-it-qat-GGUF` | `gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf` | ~4.2 GB |
 | Meta-Llama-3-8B-Instruct | `QuantFactory/Meta-Llama-3-8B-Instruct-GGUF` | `Meta-Llama-3-8B-Instruct.Q4_0.gguf` | ~4 GB |
 
 Use the model cache (Blob Storage) for models > 5 GB to avoid HF throttling.
@@ -264,6 +263,12 @@ ANSIBLE_CONFIG=ansible/ansible.cfg ansible-playbook \
   --inventory ./inventory.ini \
   ansible/benchmark.yml
 
+The playbook keeps a durable log at `/var/tmp/ai-cpu-benchmark.log` on each VM
+and collects it even when a benchmark exceeds `BENCHMARK_TIMEOUT` (14,400
+seconds by default). This preserves completed CSV rows as partial results
+instead of producing an empty result file. Set `BENCHMARK_TIMEOUT` to a value
+that fits within the surrounding CI job timeout.
+
 # 5. Cleanup (delete deployment stack and all managed resources)
 az stack group delete \
   --name           benchmark-stack \
@@ -321,5 +326,5 @@ Results are aggregated in `benchmark-results/summary.txt`.
 
 - [Exploring AI CPU-Inferencing with Azure Cobalt 100](https://thomasvanlaere.com/posts/2025/10/exploring-ai-cpu-inferencing-with-azure-cobalt-100/) – blog post this repository accompanies
 - [llama.cpp](https://github.com/ggerganov/llama.cpp) – inference engine used for benchmarking
-- [microsoft/phi-4-gguf](https://huggingface.co/microsoft/phi-4-gguf) – default benchmark model on Hugging Face
+- [unsloth/gemma-4-E4B-it-qat-GGUF](https://huggingface.co/unsloth/gemma-4-E4B-it-qat-GGUF) – default benchmark model on Hugging Face
 - [Standard Dpsv6 series](https://learn.microsoft.com/azure/virtual-machines/dpsv6-series) – Azure Cobalt 100 VM SKU documentation

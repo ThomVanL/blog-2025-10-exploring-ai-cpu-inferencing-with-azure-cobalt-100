@@ -37,7 +37,7 @@ param adminUsername = 'azureuser'
 
 // Hugging Face model to benchmark – stored as a VM tag for reference.
 // The actual download uses modelFilename, passed via benchmark.sh at runtime.
-param modelId = 'microsoft/phi-4-gguf'
+param modelId = 'unsloth/gemma-4-E4B-it-qat-GGUF'
 
 // Azure Blob Storage for model caching.  Provide an existing storage account
 // name to enable caching and avoid repeated downloads from Hugging Face.

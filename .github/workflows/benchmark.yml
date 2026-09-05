@@ -38,11 +38,11 @@ on:
       model_id:
         description: "Hugging Face model repository (owner/repo)"
         required: true
-        default: "microsoft/phi-4-gguf"
+        default: "unsloth/gemma-4-E4B-it-qat-GGUF"
       model_filename:
         description: "GGUF filename within the model repository"
         required: true
-        default: "phi-4-Q4_K_S.gguf"
+        default: "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf"
       upload_model_first:
         description: "Download model to Azure Blob Storage before benchmarking (requires STORAGE_ACCOUNT_NAME secret)"
         required: false
@@ -183,10 +183,9 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Install Ansible (latest)
-        # --force upgrades any preinstalled ansible-core on the runner so we
-        # always run the latest release from PyPI.
+        # --force upgrades any preinstalled ansible-core on the runner.
         run: |
-          pipx install --force ansible-core
+          pipx install --force ansible-core==2.21.3
           ansible --version
 
       - name: Write SSH private key
