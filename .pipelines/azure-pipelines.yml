@@ -36,12 +36,12 @@ parameters:
   - name: modelId
     displayName: "Hugging Face model repository (owner/repo)"
     type: string
-    default: "microsoft/phi-4-gguf"
+    default: "unsloth/gemma-4-E4B-it-qat-GGUF"
 
   - name: modelFilename
     displayName: "GGUF filename within the model repository"
     type: string
-    default: "phi-4-Q4_K_S.gguf"
+    default: "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf"
 
   - name: uploadModelFirst
     displayName: "Pre-upload model to Azure Blob Storage before benchmarking"

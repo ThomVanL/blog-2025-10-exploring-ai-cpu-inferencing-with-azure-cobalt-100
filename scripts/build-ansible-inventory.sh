@@ -14,7 +14,7 @@
 #       [--private-key    ~/.ssh/id_rsa] \
 #       [--inventory-file ./inventory.ini]
 #
-# Requires: az (logged in), jq
+# Requires: az (logged in)
 # =============================================================================
 set -euo pipefail
 

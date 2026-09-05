@@ -3,8 +3,8 @@
 // Override these to match your environment before deploying.
 //
 // NOTE: Hugging Face credentials (hfUsername, hfToken) and model details
-// (modelFilename) are NOT Bicep parameters – they are injected at runtime by
-// the workflow as Azure Run Command environment variables in benchmark.sh.
+// (modelFilename) are NOT Bicep parameters – they are injected at runtime
+// into benchmark.sh by the workflow (Ansible env vars or Azure Run Command).
 // =============================================================================
 using './main.bicep'
 

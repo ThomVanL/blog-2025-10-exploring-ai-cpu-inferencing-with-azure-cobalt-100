@@ -2,7 +2,8 @@
 // AI CPU Benchmarking – Azure Cobalt 100 (ARM64)
 // Scope : Resource Group
 // Deploys one Linux VM per SKU, installs llama.cpp via cloud-init,
-// then benchmarks a Hugging Face GGUF model using Azure Run Command.
+// then benchmarks a Hugging Face GGUF model at runtime (Ansible over SSH
+// in GitHub Actions; Azure Run Command in Azure Pipelines).
 // =============================================================================
 targetScope = 'resourceGroup'
 
@@ -33,7 +34,7 @@ param sshPublicKey string
 
 @description('''
 Hugging Face model repository ID (owner/repo-name) used only for tagging VMs.
-The actual model download is performed by benchmark.sh at runtime via Azure Run Command.
+The actual model download is performed by benchmark.sh at runtime.
 ''')
 param modelId string = 'unsloth/gemma-4-E4B-it-qat-GGUF'
 

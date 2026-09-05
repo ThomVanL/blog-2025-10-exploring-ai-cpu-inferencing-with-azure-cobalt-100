@@ -182,7 +182,7 @@ jobs:
           tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Install Ansible (latest)
+      - name: Install Ansible 2.21.3
         # --force upgrades any preinstalled ansible-core on the runner.
         run: |
           pipx install --force ansible-core==2.21.3
