@@ -44,27 +44,27 @@ on:
         required: true
         default: "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf"
       benchmark_tokens:
-        description: "Tokens to generate per single-stream benchmark run"
+        description: "Single-stream generation tokens (tg)"
         required: false
         default: "128"
       benchmark_prompt:
-        description: "Prompt tokens for each single-stream benchmark run"
+        description: "Single-stream prompt-processing tokens (pp)"
         required: false
         default: "512"
       batched_parallel:
-        description: "Space-separated batched parallel sequence counts"
+        description: "Space-separated parallel sequence counts (npl) for batched-bench"
         required: false
         default: "1 2 4"
       batched_batch_size:
-        description: "llama-batched-bench logical batch size"
+        description: "Token batch size per forward pass (n_batch)"
         required: false
         default: "128"
       batched_prompt_tokens:
-        description: "Prompt tokens per batched sequence"
+        description: "Prompt tokens per sequence (npp)"
         required: false
         default: "128"
       batched_generation_tokens:
-        description: "Generation tokens per batched sequence"
+        description: "Generation tokens per sequence (ntg)"
         required: false
         default: "128"
       upload_model_first:
