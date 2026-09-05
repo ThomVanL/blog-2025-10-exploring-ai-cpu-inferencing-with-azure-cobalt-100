@@ -244,6 +244,9 @@ if command -v llama-batched-bench >/dev/null 2>&1; then
   # --load-mode mlock  → pin model in RAM (avoids page-swap during benchmarks)
   # --output-format jsonl → machine-readable output for downstream parsing
   BATCHED_OUTPUT_FILE="$(mktemp)"
+  BATCHED_EXIT=0
+  BATCHED_ERROR=""
+  set +e
   llama-batched-bench \
     --model "${MODEL_PATH}" \
     --threads "${NCPU}" \
@@ -256,19 +259,26 @@ if command -v llama-batched-bench >/dev/null 2>&1; then
     --flash-attn auto \
     --load-mode mlock \
     --output-format jsonl | tee "${BATCHED_OUTPUT_FILE}"
+  BATCHED_EXIT=$?
+  set -e
   BATCHED_OUTPUT="$(cat "${BATCHED_OUTPUT_FILE}")"
   rm -f "${BATCHED_OUTPUT_FILE}"
 
   line
   log "=== llama-batched-bench results ==="
   echo "${BATCHED_OUTPUT}"
+  if (( BATCHED_EXIT != 0 )); then
+    BATCHED_ERROR="llama-batched-bench exited with status ${BATCHED_EXIT}"
+    log "ERROR: ${BATCHED_ERROR}"
+  fi
   line
 fi
 
 # ── Emit structured JSON summary ──────────────────────────────────────────────
-# Export CSV outputs for the Python snippet below.
+# Export benchmark outputs for the Python snippet below.
 export BENCH_CSV="${BENCH_OUTPUT}"
 export BATCHED_OUT="${BATCHED_OUTPUT:-}"
+export BATCHED_ERROR="${BATCHED_ERROR:-}"
 RESULT_JSON="$(python3 - <<'PYEOF'
 import sys, csv, json, io, os
 
@@ -322,6 +332,9 @@ try:
         "llama_bench": rows,
         "llama_batched_bench": _parse_batched(os.environ.get("BATCHED_OUT", "")),
     }
+    batched_error = os.environ.get("BATCHED_ERROR", "")
+    if batched_error:
+        summary["llama_batched_bench_error"] = batched_error
     print("BENCHMARK_JSON_START")
     print(json.dumps(summary, indent=2))
     print("BENCHMARK_JSON_END")
@@ -332,3 +345,6 @@ PYEOF
 
 echo "${RESULT_JSON}"
 log "=== Benchmark complete ==="
+if [[ "${BATCHED_EXIT:-0}" -ne 0 ]]; then
+  exit "${BATCHED_EXIT}"
+fi

@@ -270,7 +270,9 @@ seconds by default). This preserves completed CSV rows as partial results
 instead of producing an empty result file. Set `BENCHMARK_TIMEOUT` to a value
 that fits within the surrounding CI job timeout. GitHub Actions sizes
 `BENCHMARK_TIMEOUT` from the VM count so serial runs finish before the 8-hour
-job timeout.
+job timeout. If the batched benchmark fails after the single-stream sweep,
+the script still emits the structured JSON summary and records the batched
+error so Ansible can save the partial result artifact.
 
 ```bash
 # 5. Cleanup (delete deployment stack and all managed resources)
@@ -322,7 +324,10 @@ BENCHMARK_JSON_START
 BENCHMARK_JSON_END
 ```
 
-Results are aggregated in `benchmark-results/summary.txt`.
+The JSON summary includes both `llama_bench` and `llama_batched_bench` results;
+if the batched phase fails, `llama_batched_bench_error` explains why while
+completed single-stream results remain available. Results are aggregated in
+`benchmark-results/summary.txt`.
 
 ---
 
