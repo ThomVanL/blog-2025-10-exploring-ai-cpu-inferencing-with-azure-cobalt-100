@@ -358,10 +358,13 @@ The JSON summary includes both `llama_bench` and `llama_batched_bench` results;
 if the batched phase fails, `llama_batched_bench_error` explains why while
 completed single-stream results remain available. Results are aggregated in
 `benchmark-results/summary.txt`.
-The batched benchmark tunables default to the values used in the blog:
+The benchmark tunables default to the values used in the blog:
 
 | Setting | Environment variable / workflow input | Default |
 |---|---|---:|
+| Tokens per single-stream run | `BENCHMARK_TOKENS` / `benchmark_tokens` | 128 |
+| Prompt tokens per single-stream run | `BENCHMARK_PROMPT` / `benchmark_prompt` | 512 |
+| Batched parallel sequence counts | `BATCHED_PARALLEL` / `batched_parallel` | `1 2 4` |
 | Logical token batch size | `BATCHED_BATCH_SIZE` / `batched_batch_size` | 128 |
 | Prompt tokens per sequence | `BATCHED_PROMPT_TOKENS` / `batched_prompt_tokens` | 128 |
 | Generation tokens per sequence | `BATCHED_GENERATION_TOKENS` / `batched_generation_tokens` | 128 |

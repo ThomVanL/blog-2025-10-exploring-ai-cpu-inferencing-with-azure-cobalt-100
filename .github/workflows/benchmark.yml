@@ -43,6 +43,18 @@ on:
         description: "GGUF filename within the model repository"
         required: true
         default: "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf"
+      benchmark_tokens:
+        description: "Tokens to generate per single-stream benchmark run"
+        required: false
+        default: "128"
+      benchmark_prompt:
+        description: "Prompt tokens for each single-stream benchmark run"
+        required: false
+        default: "512"
+      batched_parallel:
+        description: "Space-separated batched parallel sequence counts"
+        required: false
+        default: "1 2 4"
       batched_batch_size:
         description: "llama-batched-bench logical batch size"
         required: false
@@ -255,6 +267,9 @@ jobs:
           HF_USERNAME:         ${{ secrets.HF_USERNAME }}
           MODEL_ID:            ${{ inputs.model_id }}
           MODEL_FILENAME:      ${{ inputs.model_filename }}
+          BENCHMARK_TOKENS:    ${{ inputs.benchmark_tokens }}
+          BENCHMARK_PROMPT:    ${{ inputs.benchmark_prompt }}
+          BATCHED_PARALLEL:    ${{ inputs.batched_parallel }}
           BATCHED_BATCH_SIZE:  ${{ inputs.batched_batch_size }}
           BATCHED_PROMPT_TOKENS: ${{ inputs.batched_prompt_tokens }}
           BATCHED_GENERATION_TOKENS: ${{ inputs.batched_generation_tokens }}
