@@ -381,7 +381,9 @@ The blog's full D64ps_v6 example also exercises `npl` values 8 and 16; add
 For a faster smoke run, dispatch the workflow with
 `benchmark_thread_counts=16`, `benchmark_repetitions=1`, and
 `benchmark_include_mixed=false`. This skips the long mixed workload and runs
-only the selected single-stream case.
+only the selected single-stream case before the batched phase. To shorten the
+batched phase as well, use `batched_parallel=1`,
+`batched_prompt_tokens=32`, and `batched_generation_tokens=32`.
 
 ---
 
