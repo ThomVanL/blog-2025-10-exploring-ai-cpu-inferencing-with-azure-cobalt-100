@@ -205,6 +205,23 @@ jobs:
             --private-key    "${HOME}/.ssh/benchmark_key" \
             --inventory-file "${{ runner.temp }}/inventory.ini"
 
+      # Size async timeout so serial VMs finish (and slurp logs) before the
+      # 480-minute job timeout kills ansible-playbook. A job-level kill skips
+      # log collection and then cleanup deletes the VMs.
+      - name: Size per-VM benchmark timeout
+        id: timeout
+        run: |
+          VM_COUNT=$(echo "${{ needs.preflight.outputs.vm_names }}" | wc -w)
+          if [ "${VM_COUNT}" -lt 1 ]; then VM_COUNT=1; fi
+          JOB_SECONDS=$((480 * 60))
+          # Runner setup, inventory, cloud-init wait on the first VM, slurp.
+          OVERHEAD_SECONDS=$((40 * 60))
+          PER_VM=$(( (JOB_SECONDS - OVERHEAD_SECONDS) / VM_COUNT ))
+          if [ "${PER_VM}" -lt 1800 ]; then PER_VM=1800; fi
+          if [ "${PER_VM}" -gt 14400 ]; then PER_VM=14400; fi
+          echo "per_vm=${PER_VM}" >> "${GITHUB_OUTPUT}"
+          echo "BENCHMARK_TIMEOUT=${PER_VM}s (${VM_COUNT} VMs, 480m job, 40m overhead)"
+
       - name: Run benchmark playbook on all VMs
         # BENCHMARK_SERIAL=1 benchmarks the VMs one at a time (avoids Hugging
         # Face rate-limiting when model caching is disabled). Increase it, or
@@ -214,15 +231,16 @@ jobs:
             --inventory "${{ runner.temp }}/inventory.ini" \
             ansible/benchmark.yml
         env:
-          ANSIBLE_CONFIG:   ansible/ansible.cfg
-          BENCHMARK_SERIAL: "1"
-          HF_TOKEN:         ${{ secrets.HF_TOKEN }}
-          HF_USERNAME:      ${{ secrets.HF_USERNAME }}
-          MODEL_ID:         ${{ inputs.model_id }}
-          MODEL_FILENAME:   ${{ inputs.model_filename }}
-          MSI_CLIENT_ID:    ${{ needs.deploy.outputs.identity_client_id }}
-          STORAGE_ACCOUNT:  ${{ secrets.STORAGE_ACCOUNT_NAME }}
-          RESULTS_DIR:      ${{ runner.temp }}/benchmark-results
+          ANSIBLE_CONFIG:      ansible/ansible.cfg
+          BENCHMARK_SERIAL:    "1"
+          BENCHMARK_TIMEOUT:   ${{ steps.timeout.outputs.per_vm }}
+          HF_TOKEN:            ${{ secrets.HF_TOKEN }}
+          HF_USERNAME:         ${{ secrets.HF_USERNAME }}
+          MODEL_ID:            ${{ inputs.model_id }}
+          MODEL_FILENAME:      ${{ inputs.model_filename }}
+          MSI_CLIENT_ID:       ${{ needs.deploy.outputs.identity_client_id }}
+          STORAGE_ACCOUNT:     ${{ secrets.STORAGE_ACCOUNT_NAME }}
+          RESULTS_DIR:         ${{ runner.temp }}/benchmark-results
 
       - name: Upload benchmark results
         if: always()
