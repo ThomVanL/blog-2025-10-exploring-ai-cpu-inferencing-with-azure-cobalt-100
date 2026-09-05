@@ -19,6 +19,9 @@
 #       [--benchmark-tokens 128]
 #       [--benchmark-prompt 512]
 #       [--batched-parallel "1 2 4"]
+#       [--batched-batch-size 128]
+#       [--batched-prompt-tokens 128]
+#       [--batched-generation-tokens 128]
 #       [--poll-interval   30]                  (seconds between status checks)
 #       [--timeout         7200]                (seconds before giving up)
 #       [--results-dir     ./benchmark-results]
@@ -38,6 +41,9 @@ THREAD_COUNTS=""
 BENCHMARK_TOKENS="128"
 BENCHMARK_PROMPT="512"
 BATCHED_PARALLEL="1 2 4"
+BATCHED_BATCH_SIZE="128"
+BATCHED_PROMPT_TOKENS="128"
+BATCHED_GENERATION_TOKENS="128"
 POLL_INTERVAL="30"
 TIMEOUT="7200"
 RESULTS_DIR="./benchmark-results"
@@ -59,6 +65,9 @@ while [[ $# -gt 0 ]]; do
     --benchmark-tokens)   BENCHMARK_TOKENS="$2";  shift 2;;
     --benchmark-prompt)   BENCHMARK_PROMPT="$2";  shift 2;;
     --batched-parallel)   BATCHED_PARALLEL="$2";  shift 2;;
+    --batched-batch-size) BATCHED_BATCH_SIZE="$2"; shift 2;;
+    --batched-prompt-tokens) BATCHED_PROMPT_TOKENS="$2"; shift 2;;
+    --batched-generation-tokens) BATCHED_GENERATION_TOKENS="$2"; shift 2;;
     --poll-interval)      POLL_INTERVAL="$2";     shift 2;;
     --timeout)            TIMEOUT="$2";           shift 2;;
     --results-dir)        RESULTS_DIR="$2";       shift 2;;
@@ -104,6 +113,9 @@ export THREAD_COUNTS='${THREAD_COUNTS}'
 export BENCHMARK_TOKENS='${BENCHMARK_TOKENS}'
 export BENCHMARK_PROMPT='${BENCHMARK_PROMPT}'
 export BATCHED_PARALLEL='${BATCHED_PARALLEL}'
+export BATCHED_BATCH_SIZE='${BATCHED_BATCH_SIZE}'
+export BATCHED_PROMPT_TOKENS='${BATCHED_PROMPT_TOKENS}'
+export BATCHED_GENERATION_TOKENS='${BATCHED_GENERATION_TOKENS}'
 ENVEOF
 }
 
