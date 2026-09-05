@@ -168,7 +168,7 @@ fi
 
 if az ad app federated-credential list \
   --id "$CLIENT_ID" \
-  --query "[?name=='${CREDENTIAL_NAME}'] | [0].name" \
+  --query '[].name' \
   --output tsv | grep -Fxq "$CREDENTIAL_NAME"; then
   printf 'Federated credential already exists: %s\n' "$CREDENTIAL_NAME"
 else

@@ -20,6 +20,9 @@ set -euo pipefail
 
 log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*"; }
 die() { log "ERROR: $*" >&2; exit 1; }
+require_value() {
+  [[ $# -ge 2 ]] || die "$1 requires a value"
+}
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
 ADMIN_USERNAME="azureuser"
@@ -29,11 +32,31 @@ INVENTORY_FILE="./inventory.ini"
 # ── Parse arguments ───────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --resource-group)  RESOURCE_GROUP="$2";  shift 2;;
-    --vm-names)        VM_NAMES="$2";        shift 2;;
-    --admin-username)  ADMIN_USERNAME="$2";  shift 2;;
-    --private-key)     PRIVATE_KEY="$2";     shift 2;;
-    --inventory-file)  INVENTORY_FILE="$2";  shift 2;;
+    --resource-group)
+      require_value "$@"
+      RESOURCE_GROUP="$2"
+      shift 2
+      ;;
+    --vm-names)
+      require_value "$@"
+      VM_NAMES="$2"
+      shift 2
+      ;;
+    --admin-username)
+      require_value "$@"
+      ADMIN_USERNAME="$2"
+      shift 2
+      ;;
+    --private-key)
+      require_value "$@"
+      PRIVATE_KEY="$2"
+      shift 2
+      ;;
+    --inventory-file)
+      require_value "$@"
+      INVENTORY_FILE="$2"
+      shift 2
+      ;;
     *) die "Unknown argument: $1";;
   esac
 done
