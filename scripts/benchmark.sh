@@ -9,8 +9,8 @@
 # Required environment variables:
 #   HF_TOKEN          – Hugging Face access token
 #   HF_USERNAME       – Hugging Face username
-#   MODEL_ID          – HF repo id  (e.g. microsoft/phi-4-gguf, QuantFactory/Meta-Llama-3-8B-Instruct-GGUF)
-#   MODEL_FILENAME    – GGUF file   (e.g. phi-4-Q4_K_S.gguf, Meta-Llama-3-8B-Instruct.Q4_0.gguf)
+#   MODEL_ID          – HF repo id  (e.g. unsloth/gemma-4-E4B-it-qat-GGUF)
+#   MODEL_FILENAME    – GGUF file   (e.g. gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf)
 #
 # Optional environment variables:
 #   STORAGE_ACCOUNT   – Azure Storage Account name for model caching
@@ -24,15 +24,23 @@
 #   BENCHMARK_PROMPT  – Prompt tokens to process       (default: 512)
 #   BATCHED_PARALLEL  – Space-separated parallel sequence counts for
 #                       llama-batched-bench             (default: 1 2 4)
+#   RESULT_LOG        – Durable benchmark log path     (default: /var/tmp/ai-cpu-benchmark.log)
 # =============================================================================
 set -euo pipefail
+
+# Keep a durable copy on the VM so the Ansible controller can collect partial
+# results if the asynchronous benchmark exceeds its timeout.
+RESULT_LOG="${RESULT_LOG:-/var/tmp/ai-cpu-benchmark.log}"
+mkdir -p "$(dirname "${RESULT_LOG}")"
+: > "${RESULT_LOG}"
+exec > >(tee -a "${RESULT_LOG}") 2>&1
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
 MODEL_DIR="${MODEL_DIR:-/opt/models}"
 CACHE_CONTAINER="${CACHE_CONTAINER:-model-cache}"
 BENCHMARK_TOKENS="${BENCHMARK_TOKENS:-128}"
 BENCHMARK_PROMPT="${BENCHMARK_PROMPT:-512}"
-BATCHED_PARALLEL="${BATCHED_PARALLEL:-1 2 4 8 16}"
+BATCHED_PARALLEL="${BATCHED_PARALLEL:-1 2 4}"
 NCPU="$(nproc)"
 
 # Build a default thread list: 1, 2, 4, ..., up to nproc (powers of 2).
@@ -178,14 +186,18 @@ done
 # -n           → number of tokens to generate
 # -pg 256,1024 → mixed pp+tg scenario (pp256+tg1024), matching blog benchmarks
 # --output csv → machine-readable output for downstream parsing
-BENCH_OUTPUT="$(llama-bench \
+BENCH_OUTPUT_FILE="$(mktemp)"
+llama-bench \
   --model "${MODEL_PATH}" \
   -p "${BENCHMARK_PROMPT}" \
   -n "${BENCHMARK_TOKENS}" \
   -pg 256,1024 \
   -ngl 0 \
   ${THREAD_ARGS} \
-  --output csv 2>&1)"
+  --progress \
+  --output csv 2>&1 | tee "${BENCH_OUTPUT_FILE}"
+BENCH_OUTPUT="$(cat "${BENCH_OUTPUT_FILE}")"
+rm -f "${BENCH_OUTPUT_FILE}"
 
 line
 log "=== llama-bench results ==="
@@ -223,7 +235,8 @@ if command -v llama-batched-bench >/dev/null 2>&1; then
   # --ctx-size 4096  → total KV context window; 16×(128+128)=4096 per blog
   # --flash-attn     → FlashAttention kernels for faster attention
   # --mlock          → pin model in RAM (avoids page-swap during benchmarks)
-  BATCHED_OUTPUT="$(llama-batched-bench \
+  BATCHED_OUTPUT_FILE="$(mktemp)"
+  llama-batched-bench \
     --model "${MODEL_PATH}" \
     --threads "${NCPU}" \
     --threads-batch "${NCPU}" \
@@ -234,7 +247,10 @@ if command -v llama-batched-bench >/dev/null 2>&1; then
     --ctx-size 4096 \
     --flash-attn \
     --mlock \
-    --output-format csv 2>&1)"
+    --progress \
+    --output-format csv 2>&1 | tee "${BATCHED_OUTPUT_FILE}"
+  BATCHED_OUTPUT="$(cat "${BATCHED_OUTPUT_FILE}")"
+  rm -f "${BATCHED_OUTPUT_FILE}"
 
   line
   log "=== llama-batched-bench results ==="
