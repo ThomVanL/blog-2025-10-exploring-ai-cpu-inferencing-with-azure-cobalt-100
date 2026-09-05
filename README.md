@@ -358,7 +358,6 @@ The JSON summary includes both `llama_bench` and `llama_batched_bench` results;
 if the batched phase fails, `llama_batched_bench_error` explains why while
 completed single-stream results remain available. Results are aggregated in
 `benchmark-results/summary.txt`.
-
 The batched benchmark tunables default to the values used in the blog:
 
 | Setting | Environment variable / workflow input | Default |
