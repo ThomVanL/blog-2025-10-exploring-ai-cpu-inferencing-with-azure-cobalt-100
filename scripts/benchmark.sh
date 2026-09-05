@@ -29,11 +29,16 @@
 set -euo pipefail
 
 # Keep a durable copy on the VM so the Ansible controller can collect partial
-# results if the asynchronous benchmark exceeds its timeout.
+# results if the asynchronous benchmark exceeds its timeout. Line-buffer tee so
+# completed CSV rows are visible to slurp before the process substitution exits.
 RESULT_LOG="${RESULT_LOG:-/var/tmp/ai-cpu-benchmark.log}"
 mkdir -p "$(dirname "${RESULT_LOG}")"
 : > "${RESULT_LOG}"
-exec > >(tee -a "${RESULT_LOG}") 2>&1
+if command -v stdbuf >/dev/null 2>&1; then
+  exec > >(stdbuf -oL -eL tee -a "${RESULT_LOG}") 2>&1
+else
+  exec > >(tee -a "${RESULT_LOG}") 2>&1
+fi
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
 MODEL_DIR="${MODEL_DIR:-/opt/models}"

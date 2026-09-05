@@ -108,10 +108,18 @@
               else 'Failed') }}
         benchmark_failed: "{{ benchmark_run is not succeeded }}"
 
+    # Prefer async stdout on success: the durable tee log can lag and drop the
+    # JSON trailer. On timeout/failure, slurp the log (stdout is often empty).
     - name: Prepare benchmark output
       ansible.builtin.set_fact:
         benchmark_output: >-
-          {% if benchmark_log.content is defined %}
+          {% if benchmark_run is succeeded and (benchmark_run.stdout | default('') | trim | length > 0) %}
+          {{ benchmark_run.stdout }}
+          {% if benchmark_run.stderr | default('') | trim | length > 0 %}
+          --- STDERR ---
+          {{ benchmark_run.stderr }}
+          {% endif %}
+          {% elif benchmark_log.content is defined %}
           {{ benchmark_log.content | b64decode }}
           {% else %}
           {{ benchmark_run.stdout | default('') }}
