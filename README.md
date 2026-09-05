@@ -89,6 +89,7 @@ There's both a **GitHub Actions workflow** and an **Azure DevOps pipeline** in t
 ├── scripts/
 │   ├── benchmark.sh        # Benchmark runner (executed ON the VM)
 │   ├── build-ansible-inventory.sh # Resolve LB public IP + SSH NAT ports into an inventory
+│   ├── setup-github-oidc.sh # Create Entra app + GitHub Actions OIDC trust
 │   ├── run-benchmarks.sh   # Legacy Run Command orchestration (still used by Azure Pipelines)
 │   └── upload-model.sh     # Pre-upload GGUF model to Azure Blob Storage
 ├── .devcontainer
@@ -117,7 +118,36 @@ There's both a **GitHub Actions workflow** and an **Azure DevOps pipeline** in t
 
 ## Quick Start
 
-### 1. Configure secrets (GitHub)
+### 1. Create the Azure workload identity (one-time)
+
+The GitHub Actions workflow uses Microsoft Entra workload identity federation,
+not a client secret. After installing Azure CLI and `jq`, sign in from a
+trusted local machine and run:
+
+```bash
+az login
+
+bash scripts/setup-github-oidc.sh \
+  --app-name ai-cpu-benchmark-github \
+  --owner ThomVanL \
+  --repo blog-2025-10-exploring-ai-cpu-inferencing-with-azure-cobalt-100 \
+  --branch main
+```
+
+The script creates an Entra app registration, its service principal, a
+federated credential for the selected GitHub branch, and a `Contributor`
+assignment at the current subscription scope. Pass `--scope
+/subscriptions/SUBSCRIPTION_ID/resourceGroups/RESOURCE_GROUP` to reduce the
+scope when the resource group already exists. Pass `--subject` for an
+environment, pull request, tag, or other GitHub OIDC subject pattern.
+
+The default subscription-level role is needed by this workflow because it can
+create the resource group. Use a narrower resource-group scope when the
+resource group is created separately and the workflow no longer needs
+subscription-level access. Review the role and scope before confirming the
+assignment.
+
+### 2. Configure secrets (GitHub)
 
 In **Settings → Secrets and variables → Actions**, add:
 
@@ -133,13 +163,13 @@ In **Settings → Secrets and variables → Actions**, add:
 | `STORAGE_ACCOUNT_NAME` | *(Optional)* Azure Storage Account for model caching |
 | `STORAGE_SAS_TOKEN` | *(Optional)* SAS token for the storage account |
 
-### 2. Run the workflow
+### 3. Run the workflow
 
 1. Go to **Actions → AI CPU Benchmark → Run workflow**
 2. Fill in the parameters (resource group, location, SKUs, model, etc.)
 3. Click **Run workflow**
 
-### 3. View results
+### 4. View results
 
 - Logs are printed live in the **Benchmark all VMs** job
 - Results are uploaded as a workflow artifact (`benchmark-results`)
