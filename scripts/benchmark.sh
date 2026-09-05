@@ -240,8 +240,9 @@ if command -v llama-batched-bench >/dev/null 2>&1; then
   # -ntg 128         → generation tokens per sequence (fixed per blog: 128)
   # -npl             → parallel sequences to test
   # --ctx-size 4096  → total KV context window; 16×(128+128)=4096 per blog
-  # --flash-attn     → FlashAttention kernels for faster attention
-  # --mlock          → pin model in RAM (avoids page-swap during benchmarks)
+  # --flash-attn auto  → let the runtime select FlashAttention support
+  # --load-mode mlock  → pin model in RAM (avoids page-swap during benchmarks)
+  # --output-format jsonl → machine-readable output for downstream parsing
   BATCHED_OUTPUT_FILE="$(mktemp)"
   llama-batched-bench \
     --model "${MODEL_PATH}" \
@@ -252,10 +253,9 @@ if command -v llama-batched-bench >/dev/null 2>&1; then
     -ntg 128 \
     -npl "${BATCHED_NP}" \
     --ctx-size 4096 \
-    --flash-attn \
-    --mlock \
-    --progress \
-    --output-format csv | tee "${BATCHED_OUTPUT_FILE}"
+    --flash-attn auto \
+    --load-mode mlock \
+    --output-format jsonl | tee "${BATCHED_OUTPUT_FILE}"
   BATCHED_OUTPUT="$(cat "${BATCHED_OUTPUT_FILE}")"
   rm -f "${BATCHED_OUTPUT_FILE}"
 
@@ -279,6 +279,20 @@ if not raw:
 def _parse_batched(text):
     if not text:
         return []
+    json_rows = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            json_rows = []
+            break
+        if isinstance(value, dict):
+            json_rows.append(value)
+    if json_rows:
+        return json_rows
     try:
         reader = csv.DictReader(io.StringIO(text))
         return [row for row in reader if any(v.strip() for v in row.values())]
