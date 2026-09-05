@@ -43,16 +43,28 @@ on:
         description: "GGUF filename within the model repository"
         required: true
         default: "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf"
+      benchmark_tokens:
+        description: "Single-stream generation tokens (tg)"
+        required: false
+        default: "128"
+      benchmark_prompt:
+        description: "Single-stream prompt-processing tokens (pp)"
+        required: false
+        default: "512"
+      batched_parallel:
+        description: "Space-separated parallel sequence counts (npl) for batched-bench"
+        required: false
+        default: "1 2 4"
       batched_batch_size:
-        description: "llama-batched-bench logical batch size"
+        description: "Token batch size per forward pass (n_batch)"
         required: false
         default: "128"
       batched_prompt_tokens:
-        description: "Prompt tokens per batched sequence"
+        description: "Prompt tokens per sequence (npp)"
         required: false
         default: "128"
       batched_generation_tokens:
-        description: "Generation tokens per batched sequence"
+        description: "Generation tokens per sequence (ntg)"
         required: false
         default: "128"
       upload_model_first:
@@ -255,6 +267,9 @@ jobs:
           HF_USERNAME:         ${{ secrets.HF_USERNAME }}
           MODEL_ID:            ${{ inputs.model_id }}
           MODEL_FILENAME:      ${{ inputs.model_filename }}
+          BENCHMARK_TOKENS:    ${{ inputs.benchmark_tokens }}
+          BENCHMARK_PROMPT:    ${{ inputs.benchmark_prompt }}
+          BATCHED_PARALLEL:    ${{ inputs.batched_parallel }}
           BATCHED_BATCH_SIZE:  ${{ inputs.batched_batch_size }}
           BATCHED_PROMPT_TOKENS: ${{ inputs.batched_prompt_tokens }}
           BATCHED_GENERATION_TOKENS: ${{ inputs.batched_generation_tokens }}

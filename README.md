@@ -358,16 +358,23 @@ The JSON summary includes both `llama_bench` and `llama_batched_bench` results;
 if the batched phase fails, `llama_batched_bench_error` explains why while
 completed single-stream results remain available. Results are aggregated in
 `benchmark-results/summary.txt`.
-The batched benchmark tunables default to the values used in the blog:
+The benchmark tunables use the following workflow defaults:
 
 | Setting | Environment variable / workflow input | Default |
 |---|---|---:|
-| Logical token batch size | `BATCHED_BATCH_SIZE` / `batched_batch_size` | 128 |
-| Prompt tokens per sequence | `BATCHED_PROMPT_TOKENS` / `batched_prompt_tokens` | 128 |
-| Generation tokens per sequence | `BATCHED_GENERATION_TOKENS` / `batched_generation_tokens` | 128 |
+| Single-stream generation tokens (`tg`) | `BENCHMARK_TOKENS` / `benchmark_tokens` | 128 |
+| Single-stream prompt-processing tokens (`pp`) | `BENCHMARK_PROMPT` / `benchmark_prompt` | 512 |
+| Parallel sequences (`npl`) for batched-bench | `BATCHED_PARALLEL` / `batched_parallel` | `1 2 4` |
+| Token batch size per forward pass (`n_batch`) | `BATCHED_BATCH_SIZE` / `batched_batch_size` | 128 |
+| Prompt tokens per sequence (`npp`) | `BATCHED_PROMPT_TOKENS` / `batched_prompt_tokens` | 128 |
+| Generation tokens per sequence (`ntg`) | `BATCHED_GENERATION_TOKENS` / `batched_generation_tokens` | 128 |
 
 The Ansible and legacy Azure Run Command paths accept the same environment
 variables; the GitHub Actions workflow exposes them as manual dispatch inputs.
+`BATCHED_PARALLEL` is entered as space-separated values and converted to the
+comma-separated `-npl` form expected by `llama-batched-bench`.
+The blog's full D64ps_v6 example also exercises `npl` values 8 and 16; add
+`8 16` to this input when reproducing that sweep.
 
 ---
 
