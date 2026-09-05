@@ -186,6 +186,8 @@ done
 # -n           → number of tokens to generate
 # -pg 256,1024 → mixed pp+tg scenario (pp256+tg1024), matching blog benchmarks
 # --output csv → machine-readable output for downstream parsing
+# --progress writes status lines to stderr; do not merge them into the CSV
+# capture on stdout (that would break DictReader / BENCHMARK_JSON_*).
 BENCH_OUTPUT_FILE="$(mktemp)"
 llama-bench \
   --model "${MODEL_PATH}" \
@@ -195,7 +197,7 @@ llama-bench \
   -ngl 0 \
   ${THREAD_ARGS} \
   --progress \
-  --output csv 2>&1 | tee "${BENCH_OUTPUT_FILE}"
+  --output csv | tee "${BENCH_OUTPUT_FILE}"
 BENCH_OUTPUT="$(cat "${BENCH_OUTPUT_FILE}")"
 rm -f "${BENCH_OUTPUT_FILE}"
 
@@ -248,7 +250,7 @@ if command -v llama-batched-bench >/dev/null 2>&1; then
     --flash-attn \
     --mlock \
     --progress \
-    --output-format csv 2>&1 | tee "${BATCHED_OUTPUT_FILE}"
+    --output-format csv | tee "${BATCHED_OUTPUT_FILE}"
   BATCHED_OUTPUT="$(cat "${BATCHED_OUTPUT_FILE}")"
   rm -f "${BATCHED_OUTPUT_FILE}"
 
