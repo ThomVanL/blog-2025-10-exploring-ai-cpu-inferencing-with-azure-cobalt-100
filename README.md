@@ -378,7 +378,6 @@ variables; the GitHub Actions workflow exposes them as manual dispatch inputs.
 comma-separated `-npl` form expected by `llama-batched-bench`.
 The blog's full D64ps_v6 example also exercises `npl` values 8 and 16; add
 `8 16` to this input when reproducing that sweep.
-
 For a faster smoke run, dispatch the workflow with
 `benchmark_thread_counts=16`, `benchmark_repetitions=1`, and
 `benchmark_include_mixed=false`. This skips the long mixed workload and runs
