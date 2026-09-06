@@ -17,14 +17,12 @@ set -euo pipefail
 VM_SKUS_INPUT="${1:?First argument (comma-separated SKU list) is required}"
 RESOURCE_GROUP="${2:-}"
 
-[[ -n "${RESOURCE_GROUP}" ]] || {
-  echo "Resource group is required." >&2
-  exit 1
-}
-[[ "${RESOURCE_GROUP}" =~ ^[A-Za-z0-9][-A-Za-z0-9._()]{0,89}$ ]] || {
-  echo "Invalid resource group name." >&2
-  exit 1
-}
+if [[ -n "${RESOURCE_GROUP}" ]]; then
+  [[ "${RESOURCE_GROUP}" =~ ^[A-Za-z0-9][-A-Za-z0-9._()]{0,89}$ ]] || {
+    echo "Invalid resource group name." >&2
+    exit 1
+  }
+fi
 
 IFS=',' read -ra SKUS <<< "${VM_SKUS_INPUT}"
 
