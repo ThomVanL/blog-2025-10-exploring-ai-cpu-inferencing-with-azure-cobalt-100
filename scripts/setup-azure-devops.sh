@@ -5,6 +5,9 @@
 # create an Azure service connection; create that in Azure DevOps first and
 # pass its name with --service-connection.
 set -euo pipefail
+set +x
+umask 077
+export AZURE_CORE_ONLY_SHOW_ERRORS=true
 
 usage() {
   cat <<'EOF'
@@ -149,4 +152,4 @@ fi
 printf '\nVariable group configured: %s (id %s)\n' "$GROUP_NAME" "$GROUP_ID"
 printf 'Configured variables: AZURE_SERVICE_CONNECTION, SSH_PUBLIC_KEY, SSH_PRIVATE_KEY, HF_TOKEN, HF_USERNAME\n'
 [[ -n "$STORAGE_ACCOUNT" || -n "${!STORAGE_ACCOUNT_ENV:-}" ]] && printf 'Optional variable: STORAGE_ACCOUNT_NAME\n'
-printf 'Secret values were not printed.\n'
+printf 'Secret values were not printed or logged.\n'

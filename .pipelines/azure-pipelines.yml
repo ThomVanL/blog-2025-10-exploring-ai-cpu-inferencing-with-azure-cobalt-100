@@ -373,6 +373,11 @@ stages:
               ArtifactName: "benchmark-inventory"
               publishLocation: Container
 
+          - bash: |
+              rm -f "${HOME}/.ssh/benchmark_key"
+            displayName: "Remove temporary SSH private key"
+            condition: always()
+
   # ─── Stage 5: Cleanup ────────────────────────────────────────────────────────
   - stage: Cleanup
     displayName: "Cleanup VMs"
