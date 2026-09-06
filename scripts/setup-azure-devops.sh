@@ -37,13 +37,15 @@ Options:
   -h, --help               Show this help
 
 Example:
+  SSH_PUBLIC_KEY_FILE="$HOME/.ssh/adovm.pub"
+  SSH_PRIVATE_KEY_FILE="$HOME/.ssh/adovm"
   HF_TOKEN=hf_... HF_USERNAME=your-user \
   scripts/setup-azure-devops.sh \
     --organization https://dev.azure.com/ORG \
     --project ado-sandbox \
     --service-connection ado-sbx \
-    --ssh-public-key ~/.ssh/adovm.pub \
-    --ssh-private-key ~/.ssh/adovm
+    --ssh-public-key "$SSH_PUBLIC_KEY_FILE" \
+    --ssh-private-key "$SSH_PRIVATE_KEY_FILE"
 EOF
 }
 

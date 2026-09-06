@@ -322,13 +322,15 @@ az stack group delete \
   target subscription. Then configure the variable group automatically:
 
 ```bash
+SSH_PUBLIC_KEY_FILE="$HOME/.ssh/adovm.pub"
+SSH_PRIVATE_KEY_FILE="$HOME/.ssh/adovm"
 HF_TOKEN=hf_... HF_USERNAME=your-user \
 bash scripts/setup-azure-devops.sh \
   --organization https://dev.azure.com/ORG \
   --project PROJECT \
   --service-connection SERVICE_CONNECTION_NAME \
-  --ssh-public-key ~/.ssh/adovm.pub \
-  --ssh-private-key ~/.ssh/adovm
+  --ssh-public-key "$SSH_PUBLIC_KEY_FILE" \
+  --ssh-private-key "$SSH_PRIVATE_KEY_FILE"
 ```
 
   The script creates `ai-benchmark-secrets`, or updates it when
