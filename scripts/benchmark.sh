@@ -56,11 +56,17 @@ BENCHMARK_TOKENS="${BENCHMARK_TOKENS:-128}"
 BENCHMARK_PROMPT="${BENCHMARK_PROMPT:-512}"
 BENCHMARK_REPETITIONS="${BENCHMARK_REPETITIONS:-5}"
 BENCHMARK_INCLUDE_MIXED="${BENCHMARK_INCLUDE_MIXED:-true}"
+BENCHMARK_INCLUDE_MIXED="$(printf '%s' "${BENCHMARK_INCLUDE_MIXED}" | tr '[:upper:]' '[:lower:]')"
 BATCHED_PARALLEL="${BATCHED_PARALLEL:-1 2 4}"
 BATCHED_BATCH_SIZE="${BATCHED_BATCH_SIZE:-128}"
 BATCHED_PROMPT_TOKENS="${BATCHED_PROMPT_TOKENS:-128}"
 BATCHED_GENERATION_TOKENS="${BATCHED_GENERATION_TOKENS:-128}"
 NCPU="$(nproc)"
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+log()  { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*"; }
+die()  { log "ERROR: $*" >&2; exit 1; }
+line() { echo "────────────────────────────────────────────────────────────────"; }
 
 # Build a default thread list: 1, 2, 4, ..., up to nproc (powers of 2).
 if [[ -z "${THREAD_COUNTS:-}" ]]; then
@@ -81,11 +87,6 @@ case "${BENCHMARK_INCLUDE_MIXED}" in
   true|false) ;;
   *) die "BENCHMARK_INCLUDE_MIXED must be true or false";;
 esac
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
-log()  { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*"; }
-die()  { log "ERROR: $*" >&2; exit 1; }
-line() { echo "────────────────────────────────────────────────────────────────"; }
 
 # ── Validate required inputs ──────────────────────────────────────────────────
 : "${HF_TOKEN:?HF_TOKEN is required}"

@@ -6,7 +6,7 @@ A tool repository for my [Exploring AI CPU-Inferencing with Azure Cobalt 100](ht
 
 > [!NOTE]
 >
-> Looking back at this, I probably should have used Ansible over `az vm run-command` — so the GitHub Actions workflow now does exactly that: the runner acts as an Ansible control node and runs `ansible/benchmark.yml` against each VM over SSH. The Azure DevOps pipeline still uses the original `az vm run-command` approach (`scripts/run-benchmarks.sh`).
+> Looking back at this, I probably should have used Ansible over `az vm run-command` — both CI workflows now run `ansible/benchmark.yml` from the pipeline runner against each VM over SSH.
 
 There's both a **GitHub Actions workflow** and an **Azure DevOps pipeline** in there if you want to orchestrate the whole thing end-to-end. If you'd rather just grab the individual scripts in the `scripts/` folder and run them by hand, that works just fine too.
 
@@ -64,7 +64,7 @@ There's both a **GitHub Actions workflow** and an **Azure DevOps pipeline** in t
 
 | Decision | Choice | Reason |
 |---|---|---|
-| Execution method | Ansible over SSH (GitHub Actions) / Azure Run Command (Azure Pipelines) | Runner acts as control node; SSH via LB NAT rules; captured output |
+| Execution method | Ansible over SSH | Runner acts as control node; SSH via LB NAT rules; captured output |
 | Cloud-init vs Ansible | Cloud-init for provisioning, Ansible for benchmark orchestration | Cloud-init handles first boot; the ephemeral runner is the control node |
 | Inference engine | llama.cpp (built from source) | Native ARM/SVE optimisations for Cobalt 100 |
 | Model format | GGUF (4-bit quantised) | CPU-friendly quantisation; size varies by model |
@@ -90,7 +90,8 @@ There's both a **GitHub Actions workflow** and an **Azure DevOps pipeline** in t
 │   ├── benchmark.sh        # Benchmark runner (executed ON the VM)
 │   ├── build-ansible-inventory.sh # Resolve LB public IP + SSH NAT ports into an inventory
 │   ├── setup-github-oidc.sh # Create Entra app + GitHub Actions OIDC trust
-│   ├── run-benchmarks.sh   # Legacy Run Command orchestration (still used by Azure Pipelines)
+│   ├── setup-azure-devops.sh # Configure the Azure DevOps variable group
+│   ├── run-benchmarks.sh   # Legacy Run Command orchestration for manual use
 │   └── upload-model.sh     # Pre-upload GGUF model to Azure Blob Storage
 ├── .devcontainer
 │   └── devcontainer.json   # Dev container configuration
@@ -317,10 +318,40 @@ az stack group delete \
 
 ## Azure Pipelines Setup
 
-1. In Azure DevOps, create a **Variable group** named `ai-benchmark-secrets` with
-   all the secrets listed above (plus `AZURE_SERVICE_CONNECTION`).
-2. Import `.pipelines/azure-pipelines.yml` as a new pipeline.
-3. Run the pipeline and fill in the parameters.
+1. Create an Azure DevOps service connection with permission to deploy to the
+  target subscription. Then configure the variable group automatically:
+
+   ```bash
+    SSH_PUBLIC_KEY_FILE="$HOME/.ssh/benchmark_key.pub"
+    SSH_PRIVATE_KEY_FILE="$HOME/.ssh/benchmark_key"
+   HF_TOKEN=hf_... HF_USERNAME=your-user \
+   bash scripts/setup-azure-devops.sh \
+     --organization https://dev.azure.com/ORG \
+     --project PROJECT \
+     --service-connection SERVICE_CONNECTION_NAME \
+     --ssh-public-key "$SSH_PUBLIC_KEY_FILE" \
+     --ssh-private-key "$SSH_PRIVATE_KEY_FILE"
+   ```
+
+   The script creates `ai-benchmark-secrets`, or updates it when
+   `--allow-existing-group` is supplied. It validates the service connection,
+   reads the SSH keys from disk, and never prints secret values. For a newly
+   created group, explicitly authorize the intended Azure Pipeline to use
+   `ai-benchmark-secrets` in **Pipelines → Library → Variable groups**; the
+   setup script deliberately does not authorize the group for every pipeline.
+2. Alternatively, create a **Variable group** named `ai-benchmark-secrets` with
+  `AZURE_SERVICE_CONNECTION`, `SSH_PUBLIC_KEY`, matching `SSH_PRIVATE_KEY`,
+  `HF_TOKEN`, and `HF_USERNAME`. Add `STORAGE_ACCOUNT_NAME` when using the
+  blob model cache.
+3. Import `.pipelines/azure-pipelines.yml` as a new pipeline.
+4. Run the pipeline and fill in the parameters. For a smoke run, use one small
+  Cobalt SKU, `benchmarkRepetitions=1`, `benchmarkIncludeMixed=false`, one
+  thread count, and small batched prompt/generation values.
+5. Ensure the Microsoft-hosted agent can reach the load balancer's public SSH
+  endpoint. The pipeline publishes the `benchmark-results` build artifact, then
+  cleans up the deployment when `cleanupAfter` is enabled. The generated
+  inventory is kept on the ephemeral agent only and is not published because
+  it contains the live SSH endpoint.
 
 ---
 
@@ -372,8 +403,12 @@ The benchmark tunables use the following workflow defaults:
 | Prompt tokens per sequence (`npp`) | `BATCHED_PROMPT_TOKENS` / `batched_prompt_tokens` | 128 |
 | Generation tokens per sequence (`ntg`) | `BATCHED_GENERATION_TOKENS` / `batched_generation_tokens` | 128 |
 
-The Ansible and legacy Azure Run Command paths accept the same environment
-variables; the GitHub Actions workflow exposes them as manual dispatch inputs.
+The Ansible path used by both CI workflows accepts these environment variables;
+the legacy Azure Run Command script remains available for manual use. The
+original Run Command-based workflow is preserved on the [`vm-run-command`](https://github.com/ThomVanL/blog-2025-10-exploring-ai-cpu-inferencing-with-azure-cobalt-100/tree/vm-run-command)
+branch for reference or users who specifically need that execution model. The
+GitHub Actions workflow exposes the settings as manual dispatch inputs, while
+Azure Pipelines exposes them as pipeline parameters.
 `BATCHED_PARALLEL` is entered as space-separated values and converted to the
 comma-separated `-npl` form expected by `llama-batched-bench`.
 The blog's full D64ps_v6 example also exercises `npl` values 8 and 16; add
