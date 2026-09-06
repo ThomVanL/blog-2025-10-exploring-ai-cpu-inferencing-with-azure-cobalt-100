@@ -399,8 +399,12 @@ The benchmark tunables use the following workflow defaults:
 | Prompt tokens per sequence (`npp`) | `BATCHED_PROMPT_TOKENS` / `batched_prompt_tokens` | 128 |
 | Generation tokens per sequence (`ntg`) | `BATCHED_GENERATION_TOKENS` / `batched_generation_tokens` | 128 |
 
-The Ansible and legacy Azure Run Command paths accept the same environment
-variables; the GitHub Actions workflow exposes them as manual dispatch inputs.
+The Ansible path used by both CI workflows accepts these environment variables;
+the legacy Azure Run Command script remains available for manual use. The
+original Run Command-based workflow is preserved on the [`vm-run-command`](https://github.com/ThomVanL/blog-2025-10-exploring-ai-cpu-inferencing-with-azure-cobalt-100/tree/vm-run-command)
+branch for reference or users who specifically need that execution model. The
+GitHub Actions workflow exposes the settings as manual dispatch inputs, while
+Azure Pipelines exposes them as pipeline parameters.
 `BATCHED_PARALLEL` is entered as space-separated values and converted to the
 comma-separated `-npl` form expected by `llama-batched-bench`.
 The blog's full D64ps_v6 example also exercises `npl` values 8 and 16; add
