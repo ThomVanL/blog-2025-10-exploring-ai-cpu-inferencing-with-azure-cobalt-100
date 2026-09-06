@@ -72,7 +72,7 @@ LB_PUBLIC_IP="$(az network public-ip list \
 [[ -n "${LB_PUBLIC_IP}" && "${LB_PUBLIC_IP}" != "None" ]] \
   || die "Could not resolve LB public IP (pip-bm-ssh-*) in ${RESOURCE_GROUP}."
 
-log "Load balancer public IP: ${LB_PUBLIC_IP}"
+log "Resolved load balancer SSH endpoint."
 
 # ── Resolve the SSH NAT frontend port for a single VM ─────────────────────────
 resolve_ssh_port() {
@@ -110,7 +110,7 @@ mkdir -p "$(dirname "${INVENTORY_FILE}")"
   echo "[benchmark]"
   for vm in ${VM_NAMES}; do
     port="$(resolve_ssh_port "${vm}")"
-    log "  ${vm} → ${LB_PUBLIC_IP}:${port}" >&2
+    log "  ${vm} → SSH NAT mapping resolved." >&2
     line="${vm} ansible_host=${LB_PUBLIC_IP} ansible_port=${port} ansible_user=${ADMIN_USERNAME}"
     if [[ -n "${PRIVATE_KEY}" ]]; then
       line="${line} ansible_ssh_private_key_file=${PRIVATE_KEY}"
@@ -119,5 +119,4 @@ mkdir -p "$(dirname "${INVENTORY_FILE}")"
   done
 } > "${INVENTORY_FILE}"
 
-log "Inventory written to ${INVENTORY_FILE}:"
-cat "${INVENTORY_FILE}"
+log "Inventory written for ${VM_NAMES}."

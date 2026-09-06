@@ -17,6 +17,13 @@ set -euo pipefail
 VM_SKUS_INPUT="${1:?First argument (comma-separated SKU list) is required}"
 RESOURCE_GROUP="${2:-}"
 
+if [[ -n "${RESOURCE_GROUP}" ]]; then
+  [[ "${RESOURCE_GROUP}" =~ ^[A-Za-z0-9][-A-Za-z0-9._()]{0,89}$ ]] || {
+    echo "Invalid resource group name." >&2
+    exit 1
+  }
+fi
+
 IFS=',' read -ra SKUS <<< "${VM_SKUS_INPUT}"
 
 VM_NAMES=""
@@ -25,6 +32,10 @@ FIRST=true
 
 for sku in "${SKUS[@]}"; do
   sku_trim="${sku// /}"
+  [[ "${sku_trim}" =~ ^Standard_[A-Za-z0-9]+(_[A-Za-z0-9]+)*_v[0-9]+$ ]] || {
+    echo "Invalid Azure VM SKU: ${sku_trim}" >&2
+    exit 1
+  }
   name="bm-$(echo "${sku_trim}" | tr '[:upper:]' '[:lower:]' | sed 's/standard_//' | tr '_' '-')"
   VM_NAMES="${VM_NAMES}${name} "
   if [[ "${FIRST}" == "true" ]]; then FIRST=false; else VM_SKUS_JSON="${VM_SKUS_JSON},"; fi
