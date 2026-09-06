@@ -108,7 +108,6 @@ if [[ -z "$GROUP_ID" ]]; then
   GROUP_ID="$(az pipelines variable-group create \
     --name "$GROUP_NAME" \
     --description "Secrets for the AI CPU benchmark pipeline" \
-    --authorize true \
     --variables AZURE_SERVICE_CONNECTION="$SERVICE_CONNECTION" \
     --query id \
     --output tsv)"
