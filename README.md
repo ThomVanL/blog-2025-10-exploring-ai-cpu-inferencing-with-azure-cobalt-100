@@ -90,6 +90,7 @@ There's both a **GitHub Actions workflow** and an **Azure DevOps pipeline** in t
 │   ├── benchmark.sh        # Benchmark runner (executed ON the VM)
 │   ├── build-ansible-inventory.sh # Resolve LB public IP + SSH NAT ports into an inventory
 │   ├── setup-github-oidc.sh # Create Entra app + GitHub Actions OIDC trust
+│   ├── setup-azure-devops.sh # Configure the Azure DevOps variable group
 │   ├── run-benchmarks.sh   # Legacy Run Command orchestration for manual use
 │   └── upload-model.sh     # Pre-upload GGUF model to Azure Blob Storage
 ├── .devcontainer
@@ -317,15 +318,31 @@ az stack group delete \
 
 ## Azure Pipelines Setup
 
-1. In Azure DevOps, create a **Variable group** named `ai-benchmark-secrets` with
+1. Create an Azure DevOps service connection with permission to deploy to the
+  target subscription. Then configure the variable group automatically:
+
+```bash
+HF_TOKEN=hf_... HF_USERNAME=your-user \
+bash scripts/setup-azure-devops.sh \
+  --organization https://dev.azure.com/ORG \
+  --project PROJECT \
+  --service-connection SERVICE_CONNECTION_NAME \
+  --ssh-public-key ~/.ssh/adovm.pub \
+  --ssh-private-key ~/.ssh/adovm
+```
+
+  The script creates `ai-benchmark-secrets`, or updates it when
+  `--allow-existing-group` is supplied. It validates the service connection,
+  reads the SSH keys from disk, and never prints secret values.
+2. Alternatively, create a **Variable group** named `ai-benchmark-secrets` with
   `AZURE_SERVICE_CONNECTION`, `SSH_PUBLIC_KEY`, matching `SSH_PRIVATE_KEY`,
   `HF_TOKEN`, and `HF_USERNAME`. Add `STORAGE_ACCOUNT_NAME` when using the
   blob model cache.
-2. Import `.pipelines/azure-pipelines.yml` as a new pipeline.
-3. Run the pipeline and fill in the parameters. For a smoke run, use one small
+3. Import `.pipelines/azure-pipelines.yml` as a new pipeline.
+4. Run the pipeline and fill in the parameters. For a smoke run, use one small
   Cobalt SKU, `benchmarkRepetitions=1`, `benchmarkIncludeMixed=false`, one
   thread count, and small batched prompt/generation values.
-4. Ensure the Microsoft-hosted agent can reach the load balancer's public SSH
+5. Ensure the Microsoft-hosted agent can reach the load balancer's public SSH
   endpoint. The pipeline publishes `benchmark-results` and
   `benchmark-inventory` build artifacts, then cleans up the deployment when
   `cleanupAfter` is enabled.
