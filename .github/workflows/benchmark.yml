@@ -124,7 +124,10 @@ jobs:
 
       - name: Resolve VM names from SKUs
         id: resolve
-        run: bash scripts/resolve-vm-names.sh "${{ inputs.vm_skus }}" "${{ inputs.resource_group }}"
+        run: bash scripts/resolve-vm-names.sh "$VM_SKUS" "$RESOURCE_GROUP"
+        env:
+          VM_SKUS: ${{ inputs.vm_skus }}
+          RESOURCE_GROUP: ${{ inputs.resource_group }}
 
   # ─── 2. Optionally pre-populate Azure Blob Storage with the model ──────────
   upload-model:
@@ -178,9 +181,12 @@ jobs:
       - name: Create Resource Group
         run: |
           az group create \
-            --name     "${{ needs.preflight.outputs.resource_group }}" \
-            --location "${{ inputs.location }}" \
+            --name     "$RESOURCE_GROUP" \
+            --location "$LOCATION" \
             --output   table
+        env:
+          RESOURCE_GROUP: ${{ needs.preflight.outputs.resource_group }}
+          LOCATION:       ${{ inputs.location }}
 
       - name: Deploy Bicep template
         id: deploy
@@ -244,11 +250,14 @@ jobs:
       - name: Build Ansible inventory for all deployed VMs
         run: |
           bash scripts/build-ansible-inventory.sh \
-            --resource-group "${{ needs.preflight.outputs.resource_group }}" \
-            --vm-names       "${{ needs.preflight.outputs.vm_names }}" \
+            --resource-group "$RESOURCE_GROUP" \
+            --vm-names       "$VM_NAMES" \
             --admin-username azureuser \
             --private-key    "${HOME}/.ssh/benchmark_key" \
             --inventory-file "${{ runner.temp }}/inventory.ini"
+        env:
+          RESOURCE_GROUP: ${{ needs.preflight.outputs.resource_group }}
+          VM_NAMES:       ${{ needs.preflight.outputs.vm_names }}
 
       # Size async timeout so serial VMs finish (and slurp logs) before the
       # 480-minute job timeout kills ansible-playbook. A job-level kill skips
@@ -256,7 +265,7 @@ jobs:
       - name: Size per-VM benchmark timeout
         id: timeout
         run: |
-          VM_COUNT=$(echo "${{ needs.preflight.outputs.vm_names }}" | wc -w)
+          VM_COUNT=$(printf '%s\n' "$VM_NAMES" | wc -w)
           if [ "${VM_COUNT}" -lt 1 ]; then VM_COUNT=1; fi
           JOB_SECONDS=$((480 * 60))
           # Runner setup, inventory, cloud-init wait on the first VM, slurp.
@@ -266,6 +275,8 @@ jobs:
           if [ "${PER_VM}" -gt 14400 ]; then PER_VM=14400; fi
           echo "per_vm=${PER_VM}" >> "${GITHUB_OUTPUT}"
           echo "BENCHMARK_TIMEOUT=${PER_VM}s (${VM_COUNT} VMs, 480m job, 40m overhead)"
+        env:
+          VM_NAMES: ${{ needs.preflight.outputs.vm_names }}
 
       - name: Run benchmark playbook on all VMs
         # BENCHMARK_SERIAL=1 benchmarks the VMs one at a time (avoids Hugging
@@ -324,7 +335,7 @@ jobs:
           {
             echo "============================================================"
             echo " AI CPU Benchmark Summary"
-            echo " Model : ${{ inputs.model_id }} / ${{ inputs.model_filename }}"
+            echo " Model : ${MODEL_ID} / ${MODEL_FILENAME}"
             echo " Date  : $(date -u +%Y-%m-%dT%H:%M:%SZ)"
             echo "============================================================"
             for f in benchmark-results/*.txt; do
@@ -332,6 +343,9 @@ jobs:
             done
           } > "${SUMMARY}"
           cat "${SUMMARY}"
+        env:
+          MODEL_ID:       ${{ inputs.model_id }}
+          MODEL_FILENAME: ${{ inputs.model_filename }}
 
       - name: Upload summary artifact
         uses: actions/upload-artifact@v4
