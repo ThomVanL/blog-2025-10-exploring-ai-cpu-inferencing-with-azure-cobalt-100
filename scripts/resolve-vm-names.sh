@@ -34,7 +34,7 @@ FIRST=true
 
 for sku in "${SKUS[@]}"; do
   sku_trim="${sku// /}"
-  [[ "${sku_trim}" =~ ^Standard_[A-Za-z0-9]+_v[0-9]+$ ]] || {
+  [[ "${sku_trim}" =~ ^Standard_[A-Za-z0-9]+(_[A-Za-z0-9]+)*_v[0-9]+$ ]] || {
     echo "Invalid Azure VM SKU: ${sku_trim}" >&2
     exit 1
   }
