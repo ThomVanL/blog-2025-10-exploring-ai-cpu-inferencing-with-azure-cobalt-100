@@ -125,18 +125,24 @@ fi
 set_variable() {
   local name="$1"
   local value="$2"
-  az pipelines variable-group variable update \
+  if az pipelines variable-group variable list \
     --group-id "$GROUP_ID" \
-    --name "$name" \
-    --value "$value" \
-    --secret true \
-    --output none 2>/dev/null || \
-  az pipelines variable-group variable create \
-    --group-id "$GROUP_ID" \
-    --name "$name" \
-    --value "$value" \
-    --secret true \
-    --output none
+    --query "contains(keys(@), '${name}')" \
+    --output tsv | grep -Fxq true; then
+    az pipelines variable-group variable update \
+      --group-id "$GROUP_ID" \
+      --name "$name" \
+      --value "$value" \
+      --secret true \
+      --output none
+  else
+    az pipelines variable-group variable create \
+      --group-id "$GROUP_ID" \
+      --name "$name" \
+      --value "$value" \
+      --secret true \
+      --output none
+  fi
 }
 
 set_variable SSH_PUBLIC_KEY "$(<"$SSH_PUBLIC_KEY_FILE")"
