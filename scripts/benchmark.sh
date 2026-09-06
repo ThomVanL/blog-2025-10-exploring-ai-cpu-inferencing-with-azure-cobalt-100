@@ -62,6 +62,11 @@ BATCHED_PROMPT_TOKENS="${BATCHED_PROMPT_TOKENS:-128}"
 BATCHED_GENERATION_TOKENS="${BATCHED_GENERATION_TOKENS:-128}"
 NCPU="$(nproc)"
 
+# ── Helpers ───────────────────────────────────────────────────────────────────
+log()  { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*"; }
+die()  { log "ERROR: $*" >&2; exit 1; }
+line() { echo "────────────────────────────────────────────────────────────────"; }
+
 # Build a default thread list: 1, 2, 4, ..., up to nproc (powers of 2).
 if [[ -z "${THREAD_COUNTS:-}" ]]; then
   THREAD_COUNTS="1"
@@ -81,11 +86,6 @@ case "${BENCHMARK_INCLUDE_MIXED}" in
   true|false) ;;
   *) die "BENCHMARK_INCLUDE_MIXED must be true or false";;
 esac
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
-log()  { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*"; }
-die()  { log "ERROR: $*" >&2; exit 1; }
-line() { echo "────────────────────────────────────────────────────────────────"; }
 
 # ── Validate required inputs ──────────────────────────────────────────────────
 : "${HF_TOKEN:?HF_TOKEN is required}"
