@@ -335,7 +335,10 @@ bash scripts/setup-azure-devops.sh \
 
   The script creates `ai-benchmark-secrets`, or updates it when
   `--allow-existing-group` is supplied. It validates the service connection,
-  reads the SSH keys from disk, and never prints secret values.
+  reads the SSH keys from disk, and never prints secret values. For a newly
+  created group, explicitly authorize the intended Azure Pipeline to use
+  `ai-benchmark-secrets` in **Pipelines → Library → Variable groups**; the
+  setup script deliberately does not authorize the group for every pipeline.
 2. Alternatively, create a **Variable group** named `ai-benchmark-secrets` with
   `AZURE_SERVICE_CONNECTION`, `SSH_PUBLIC_KEY`, matching `SSH_PRIVATE_KEY`,
   `HF_TOKEN`, and `HF_USERNAME`. Add `STORAGE_ACCOUNT_NAME` when using the
@@ -345,9 +348,10 @@ bash scripts/setup-azure-devops.sh \
   Cobalt SKU, `benchmarkRepetitions=1`, `benchmarkIncludeMixed=false`, one
   thread count, and small batched prompt/generation values.
 5. Ensure the Microsoft-hosted agent can reach the load balancer's public SSH
-  endpoint. The pipeline publishes `benchmark-results` and
-  `benchmark-inventory` build artifacts, then cleans up the deployment when
-  `cleanupAfter` is enabled.
+  endpoint. The pipeline publishes the `benchmark-results` build artifact, then
+  cleans up the deployment when `cleanupAfter` is enabled. The generated
+  inventory is kept on the ephemeral agent only and is not published because
+  it contains the live SSH endpoint.
 
 ---
 

@@ -365,14 +365,6 @@ stages:
               ArtifactName: "benchmark-results"
               publishLocation: Container
 
-          - task: PublishBuildArtifacts@1
-            displayName: "Publish Ansible inventory"
-            condition: always()
-            inputs:
-              PathtoPublish: "$(Build.ArtifactStagingDirectory)/inventory.ini"
-              ArtifactName: "benchmark-inventory"
-              publishLocation: Container
-
           - bash: |
               rm -f "${HOME}/.ssh/benchmark_key"
             displayName: "Remove temporary SSH private key"

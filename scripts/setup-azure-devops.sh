@@ -85,6 +85,8 @@ while (($# > 0)); do
 done
 
 command -v az >/dev/null 2>&1 || die "Azure CLI (az) is required"
+az extension show --name azure-devops --output none 2>/dev/null \
+  || die "Azure DevOps CLI extension is required; install it with: az extension add --name azure-devops"
 [[ -n "$ORGANIZATION" ]] || die "--organization is required"
 [[ -n "$PROJECT" ]] || die "--project is required"
 [[ -n "$SERVICE_CONNECTION" ]] || die "--service-connection is required"
@@ -104,7 +106,7 @@ GROUP_ID="$(az pipelines variable-group list \
   --query "[?name=='${GROUP_NAME}'].id | [0]" \
   --output tsv)"
 
-if [[ -z "$GROUP_ID" ]]; then
+if [[ -z "$GROUP_ID" || "$GROUP_ID" == "None" ]]; then
   GROUP_ID="$(az pipelines variable-group create \
     --name "$GROUP_NAME" \
     --description "Secrets for the AI CPU benchmark pipeline" \
@@ -128,7 +130,7 @@ set_variable() {
   if az pipelines variable-group variable list \
     --group-id "$GROUP_ID" \
     --query "contains(keys(@), '${name}')" \
-    --output tsv | grep -Fxq true; then
+    --output tsv | grep -Eiq '^true$'; then
     az pipelines variable-group variable update \
       --group-id "$GROUP_ID" \
       --name "$name" \
