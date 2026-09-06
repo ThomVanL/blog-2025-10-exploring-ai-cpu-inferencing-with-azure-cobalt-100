@@ -321,24 +321,24 @@ az stack group delete \
 1. Create an Azure DevOps service connection with permission to deploy to the
   target subscription. Then configure the variable group automatically:
 
-```bash
-SSH_PUBLIC_KEY_FILE="$HOME/.ssh/adovm.pub"
-SSH_PRIVATE_KEY_FILE="$HOME/.ssh/adovm"
-HF_TOKEN=hf_... HF_USERNAME=your-user \
-bash scripts/setup-azure-devops.sh \
-  --organization https://dev.azure.com/ORG \
-  --project PROJECT \
-  --service-connection SERVICE_CONNECTION_NAME \
-  --ssh-public-key "$SSH_PUBLIC_KEY_FILE" \
-  --ssh-private-key "$SSH_PRIVATE_KEY_FILE"
-```
+   ```bash
+    SSH_PUBLIC_KEY_FILE="$HOME/.ssh/benchmark_key.pub"
+    SSH_PRIVATE_KEY_FILE="$HOME/.ssh/benchmark_key"
+   HF_TOKEN=hf_... HF_USERNAME=your-user \
+   bash scripts/setup-azure-devops.sh \
+     --organization https://dev.azure.com/ORG \
+     --project PROJECT \
+     --service-connection SERVICE_CONNECTION_NAME \
+     --ssh-public-key "$SSH_PUBLIC_KEY_FILE" \
+     --ssh-private-key "$SSH_PRIVATE_KEY_FILE"
+   ```
 
-  The script creates `ai-benchmark-secrets`, or updates it when
-  `--allow-existing-group` is supplied. It validates the service connection,
-  reads the SSH keys from disk, and never prints secret values. For a newly
-  created group, explicitly authorize the intended Azure Pipeline to use
-  `ai-benchmark-secrets` in **Pipelines → Library → Variable groups**; the
-  setup script deliberately does not authorize the group for every pipeline.
+   The script creates `ai-benchmark-secrets`, or updates it when
+   `--allow-existing-group` is supplied. It validates the service connection,
+   reads the SSH keys from disk, and never prints secret values. For a newly
+   created group, explicitly authorize the intended Azure Pipeline to use
+   `ai-benchmark-secrets` in **Pipelines → Library → Variable groups**; the
+   setup script deliberately does not authorize the group for every pipeline.
 2. Alternatively, create a **Variable group** named `ai-benchmark-secrets` with
   `AZURE_SERVICE_CONNECTION`, `SSH_PUBLIC_KEY`, matching `SSH_PRIVATE_KEY`,
   `HF_TOKEN`, and `HF_USERNAME`. Add `STORAGE_ACCOUNT_NAME` when using the

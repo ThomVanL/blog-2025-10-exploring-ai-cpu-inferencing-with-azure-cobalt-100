@@ -37,8 +37,8 @@ Options:
   -h, --help               Show this help
 
 Example:
-  SSH_PUBLIC_KEY_FILE="$HOME/.ssh/adovm.pub"
-  SSH_PRIVATE_KEY_FILE="$HOME/.ssh/adovm"
+  SSH_PUBLIC_KEY_FILE="$HOME/.ssh/benchmark_key.pub"
+  SSH_PRIVATE_KEY_FILE="$HOME/.ssh/benchmark_key"
   HF_TOKEN=hf_... HF_USERNAME=your-user \
   scripts/setup-azure-devops.sh \
     --organization https://dev.azure.com/ORG \
