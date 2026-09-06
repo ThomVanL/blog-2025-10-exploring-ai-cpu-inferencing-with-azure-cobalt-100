@@ -85,6 +85,7 @@ while (($# > 0)); do
 done
 
 command -v az >/dev/null 2>&1 || die "Azure CLI (az) is required"
+command -v jq >/dev/null 2>&1 || die "jq is required"
 az extension show --name azure-devops --output none 2>/dev/null \
   || die "Azure DevOps CLI extension is required; install it with: az extension add --name azure-devops"
 [[ -n "$ORGANIZATION" ]] || die "--organization is required"
@@ -97,14 +98,16 @@ az extension show --name azure-devops --output none 2>/dev/null \
 
 az devops configure --defaults organization="$ORGANIZATION" project="$PROJECT" >/dev/null
 
-az devops service-endpoint list \
-  --query "[?name=='${SERVICE_CONNECTION}'].name | [0]" \
-  --output tsv | grep -Fxq "$SERVICE_CONNECTION" \
-  || die "service connection not found: $SERVICE_CONNECTION"
+if ! az devops service-endpoint list \
+  --query '[].name' \
+  --output tsv | grep -Fxq "$SERVICE_CONNECTION"; then
+  die "service connection not found: $SERVICE_CONNECTION"
+fi
 
 GROUP_ID="$(az pipelines variable-group list \
-  --query "[?name=='${GROUP_NAME}'].id | [0]" \
-  --output tsv)"
+  --query '[].{id:id,name:name}' \
+  --output json | jq -r --arg group_name "$GROUP_NAME" \
+    '.[] | select(.name == $group_name) | .id' | head -n 1)"
 
 if [[ -z "$GROUP_ID" || "$GROUP_ID" == "None" ]]; then
   GROUP_ID="$(az pipelines variable-group create \

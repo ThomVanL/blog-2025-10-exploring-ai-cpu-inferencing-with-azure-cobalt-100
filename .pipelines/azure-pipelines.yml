@@ -285,7 +285,7 @@ stages:
                 --vm-names "$(vmNames)"
                 --admin-username azureuser
                 --private-key "${HOME}/.ssh/benchmark_key"
-                --inventory-file "$(Build.ArtifactStagingDirectory)/inventory.ini"
+                --inventory-file "$(Agent.TempDirectory)/benchmark-inventory.ini"
 
           - bash: |
               set -euo pipefail
@@ -315,7 +315,7 @@ stages:
                 fi
                 export ANSIBLE_CONFIG="${PWD}/ansible/ansible.cfg"
                 ansible-playbook \
-                  --inventory "$(Build.ArtifactStagingDirectory)/inventory.ini" \
+                  --inventory "$(Agent.TempDirectory)/benchmark-inventory.ini" \
                   ansible/benchmark.yml
             env:
               BENCHMARK_SERIAL:             ${{ parameters.benchmarkSerial }}
@@ -366,7 +366,9 @@ stages:
               publishLocation: Container
 
           - bash: |
-              rm -f "${HOME}/.ssh/benchmark_key"
+              rm -f \
+                "${HOME}/.ssh/benchmark_key" \
+                "$(Agent.TempDirectory)/benchmark-inventory.ini"
             displayName: "Remove temporary SSH private key"
             condition: always()
 
