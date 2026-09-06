@@ -42,10 +42,10 @@ There's both a **GitHub Actions workflow** and an **Azure DevOps pipeline** in t
            │                      │
            ▼                      ▼
   ┌─────────────────┐   ┌────────────────────────┐
-  │  Azure          │   │  Azure Blob Storage     │
-  │  Resource Group │   │  (model cache, opt.)    │
-  │  ┌───────────┐  │   │  model-cache/           │
-  │  │ VNet/Snet │  │   │  └ <model>.gguf         │
+  │  Azure          │   │  Azure Blob Storage    │
+  │  Resource Group │   │  (model cache, opt.)   │
+  │  ┌───────────┐  │   │  model-cache/          │
+  │  │ VNet/Snet │  │   │  └ <model>.gguf        │
   │  └───────────┘  │   └────────────────────────┘
   │  ┌───────────┐  │
   │  │    LB     │──┼── public IP, NAT :5000x → SSH
