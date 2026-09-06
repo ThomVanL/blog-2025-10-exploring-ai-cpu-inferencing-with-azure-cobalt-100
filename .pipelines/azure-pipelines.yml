@@ -6,7 +6,8 @@
 # Variable Groups / Secrets required (configure in Library → Variable groups):
 #   Variable group: "ai-benchmark-secrets"
 #     AZURE_SERVICE_CONNECTION  – Azure DevOps service connection name
-#     SSH_PUBLIC_KEY             – RSA public key for VM auth
+#     SSH_PUBLIC_KEY             – SSH public key for VM auth
+#     SSH_PRIVATE_KEY            – matching private key used by Ansible
 #     HF_TOKEN                   – Hugging Face access token (read)
 #     HF_USERNAME                – Hugging Face username
 #     STORAGE_ACCOUNT_NAME       – (optional) Azure Storage Account for caching
@@ -42,6 +43,56 @@ parameters:
     displayName: "GGUF filename within the model repository"
     type: string
     default: "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf"
+
+  - name: benchmarkThreadCounts
+    displayName: "llama-bench thread counts"
+    type: string
+    default: "1 2 4 8 16"
+
+  - name: benchmarkRepetitions
+    displayName: "Timed repetitions per benchmark case"
+    type: number
+    default: 5
+
+  - name: benchmarkIncludeMixed
+    displayName: "Include mixed pp256+tg1024 benchmark"
+    type: boolean
+    default: true
+
+  - name: benchmarkTokens
+    displayName: "Generation tokens"
+    type: number
+    default: 128
+
+  - name: benchmarkPrompt
+    displayName: "Prompt-processing tokens"
+    type: number
+    default: 512
+
+  - name: batchedParallel
+    displayName: "Batched parallel sequence counts"
+    type: string
+    default: "1 2 4"
+
+  - name: batchedBatchSize
+    displayName: "Batched token batch size"
+    type: number
+    default: 128
+
+  - name: batchedPromptTokens
+    displayName: "Batched prompt tokens per sequence"
+    type: number
+    default: 128
+
+  - name: batchedGenerationTokens
+    displayName: "Batched generation tokens per sequence"
+    type: number
+    default: 128
+
+  - name: benchmarkSerial
+    displayName: "VMs benchmarked concurrently"
+    type: string
+    default: "1"
 
   - name: uploadModelFirst
     displayName: "Pre-upload model to Azure Blob Storage before benchmarking"
@@ -183,7 +234,7 @@ stages:
               SSH_PUBLIC_KEY:      $(SSH_PUBLIC_KEY)
               STORAGE_ACCOUNT_NAME: $(STORAGE_ACCOUNT_NAME)
 
-  # ─── Stage 4: Run benchmarks – one job per VM (mirrors GHA matrix) ──────────
+  # ─── Stage 4: Run benchmarks from an Ansible control node ──────────────────
   - stage: Benchmark
     displayName: "Run Benchmarks"
     dependsOn:
@@ -193,41 +244,134 @@ stages:
     variables:
       identityClientId: $[ stageDependencies.Deploy.DeployVMs.outputs['msiStep.identityClientId'] ]
     jobs:
-      - ${{ each sku in parameters.vmSkus }}:
-        - job: Bm${{ replace(replace(sku, 'Standard_', ''), '_', '') }}
-          displayName: "Benchmark ${{ sku }}"
-          pool:
-            vmImage: ubuntu-latest
-          timeoutInMinutes: 480    # 8 hours to accommodate long-running CPU benchmarks
-          steps:
-            - checkout: self
+      - job: BenchmarkAllVMs
+        displayName: "Benchmark all VMs with Ansible"
+        pool:
+          vmImage: ubuntu-latest
+        timeoutInMinutes: 480
+        variables:
+          vmNames: $[ stageDependencies.Preflight.ResolveVMNames.outputs['resolveStep.vmNames'] ]
+        steps:
+          - checkout: self
 
-            - task: AzureCLI@2
-              displayName: "Run benchmark on ${{ sku }}"
-              inputs:
-                azureSubscription: $(AZURE_SERVICE_CONNECTION)
-                scriptType: bash
-                scriptLocation: scriptPath
-                scriptPath: scripts/run-benchmarks.sh
-                arguments: >
-                  --resource-group "${{ parameters.resourceGroup }}"
-                  --vm-name "bm-${{ replace(replace(lower(sku), 'standard_', ''), '_', '-') }}"
-                  --model-id "${{ parameters.modelId }}"
-                  --model-filename "${{ parameters.modelFilename }}"
-                  --msi-client-id "$(identityClientId)"
-                  --results-dir "$(Build.ArtifactStagingDirectory)/benchmark-results"
-              env:
-                HF_TOKEN:             $(HF_TOKEN)
-                HF_USERNAME:          $(HF_USERNAME)
-                STORAGE_ACCOUNT_NAME: $(STORAGE_ACCOUNT_NAME)
+          - bash: |
+              set -euo pipefail
+              python3 -m venv "${AGENT_TEMPDIRECTORY}/ansible-venv"
+              "${AGENT_TEMPDIRECTORY}/ansible-venv/bin/python" -m pip install \
+                --disable-pip-version-check \
+                ansible-core==2.21.3
+              echo "##vso[task.prependpath]${AGENT_TEMPDIRECTORY}/ansible-venv/bin"
+              "${AGENT_TEMPDIRECTORY}/ansible-venv/bin/ansible" --version
+            displayName: "Install Ansible 2.21.3"
 
-            - task: PublishBuildArtifacts@1
-              displayName: "Publish benchmark results"
-              condition: always()
-              inputs:
-                PathtoPublish: "$(Build.ArtifactStagingDirectory)/benchmark-results"
-                ArtifactName:  "benchmark-${{ sku }}"
-                publishLocation: Container
+          - bash: |
+              set -euo pipefail
+              mkdir -p "${HOME}/.ssh"
+              printf '%s\n' "${SSH_PRIVATE_KEY}" > "${HOME}/.ssh/benchmark_key"
+              chmod 600 "${HOME}/.ssh/benchmark_key"
+            displayName: "Write SSH private key"
+            env:
+              SSH_PRIVATE_KEY: $(SSH_PRIVATE_KEY)
+
+          - task: AzureCLI@2
+            displayName: "Build Ansible inventory"
+            inputs:
+              azureSubscription: $(AZURE_SERVICE_CONNECTION)
+              scriptType: bash
+              scriptLocation: scriptPath
+              scriptPath: scripts/build-ansible-inventory.sh
+              arguments: >
+                --resource-group "${{ parameters.resourceGroup }}"
+                --vm-names "$(vmNames)"
+                --admin-username azureuser
+                --private-key "${HOME}/.ssh/benchmark_key"
+                --inventory-file "$(Build.ArtifactStagingDirectory)/inventory.ini"
+
+          - bash: |
+              set -euo pipefail
+              vm_count=$(printf '%s\n' "${VM_NAMES}" | wc -w | tr -d ' ')
+              if [ "${vm_count}" -lt 1 ]; then vm_count=1; fi
+              job_seconds=$((480 * 60))
+              overhead_seconds=$((40 * 60))
+              per_vm=$(( (job_seconds - overhead_seconds) / vm_count ))
+              if [ "${per_vm}" -lt 1800 ]; then per_vm=1800; fi
+              if [ "${per_vm}" -gt 14400 ]; then per_vm=14400; fi
+              echo "##vso[task.setvariable variable=benchmarkTimeout]${per_vm}"
+              echo "BENCHMARK_TIMEOUT=${per_vm}s (${vm_count} VMs, 480m job, 40m overhead)"
+            displayName: "Size per-VM benchmark timeout"
+            env:
+              VM_NAMES: $(vmNames)
+
+          - task: AzureCLI@2
+            displayName: "Run benchmark playbook on all VMs"
+            inputs:
+              azureSubscription: $(AZURE_SERVICE_CONNECTION)
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -euo pipefail
+                if [[ "${STORAGE_ACCOUNT:-}" == '$('* ]] || [[ "${STORAGE_ACCOUNT:-}" == '$['* ]]; then
+                  export STORAGE_ACCOUNT=""
+                fi
+                export ANSIBLE_CONFIG="${PWD}/ansible/ansible.cfg"
+                ansible-playbook \
+                  --inventory "$(Build.ArtifactStagingDirectory)/inventory.ini" \
+                  ansible/benchmark.yml
+            env:
+              BENCHMARK_SERIAL:             ${{ parameters.benchmarkSerial }}
+              BENCHMARK_TIMEOUT:            $(benchmarkTimeout)
+              HF_TOKEN:                      $(HF_TOKEN)
+              HF_USERNAME:                   $(HF_USERNAME)
+              MODEL_ID:                      ${{ parameters.modelId }}
+              MODEL_FILENAME:                ${{ parameters.modelFilename }}
+              THREAD_COUNTS:                 ${{ parameters.benchmarkThreadCounts }}
+              BENCHMARK_REPETITIONS:         ${{ parameters.benchmarkRepetitions }}
+              BENCHMARK_INCLUDE_MIXED:       ${{ parameters.benchmarkIncludeMixed }}
+              BENCHMARK_TOKENS:              ${{ parameters.benchmarkTokens }}
+              BENCHMARK_PROMPT:              ${{ parameters.benchmarkPrompt }}
+              BATCHED_PARALLEL:              ${{ parameters.batchedParallel }}
+              BATCHED_BATCH_SIZE:            ${{ parameters.batchedBatchSize }}
+              BATCHED_PROMPT_TOKENS:         ${{ parameters.batchedPromptTokens }}
+              BATCHED_GENERATION_TOKENS:     ${{ parameters.batchedGenerationTokens }}
+              MSI_CLIENT_ID:                 $(identityClientId)
+              STORAGE_ACCOUNT:               $(STORAGE_ACCOUNT_NAME)
+              RESULTS_DIR:                   $(Build.ArtifactStagingDirectory)/benchmark-results
+
+          - bash: |
+              set -euo pipefail
+              results_dir="$(Build.ArtifactStagingDirectory)/benchmark-results"
+              summary="${results_dir}/summary.txt"
+              mkdir -p "${results_dir}"
+              {
+                echo "============================================================"
+                echo " AI CPU Benchmark Summary"
+                echo " Model : ${{ parameters.modelId }} / ${{ parameters.modelFilename }}"
+                echo " Date  : $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+                echo "============================================================"
+                find "${results_dir}" -maxdepth 1 -name '*.txt' ! -name 'summary.txt' -print0 |
+                  while IFS= read -r -d '' file; do
+                    awk '/BENCHMARK_JSON_START/{p=1;next}/BENCHMARK_JSON_END/{p=0}p' "${file}"
+                  done
+              } > "${summary}"
+              cat "${summary}"
+            displayName: "Build benchmark summary"
+            condition: always()
+
+          - task: PublishBuildArtifacts@1
+            displayName: "Publish benchmark results"
+            condition: always()
+            inputs:
+              PathtoPublish: "$(Build.ArtifactStagingDirectory)/benchmark-results"
+              ArtifactName: "benchmark-results"
+              publishLocation: Container
+
+          - task: PublishBuildArtifacts@1
+            displayName: "Publish Ansible inventory"
+            condition: always()
+            inputs:
+              PathtoPublish: "$(Build.ArtifactStagingDirectory)/inventory.ini"
+              ArtifactName: "benchmark-inventory"
+              publishLocation: Container
 
   # ─── Stage 5: Cleanup ────────────────────────────────────────────────────────
   - stage: Cleanup
